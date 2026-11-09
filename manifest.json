@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Kiểm tra hồ sơ bệnh án điện tử",
+  "version": "3.2.6.63",
+  "description": "Bo qua Vilanta trong bat liu dung; chi bat tan suat nhom thuoc theo lieu dung khi don vi la Vien.",
+  "permissions": [
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://bvdksoctrang.vncare.vn/*",
+    "https://gdbhyt.baohiemxahoi.gov.vn/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://bvdksoctrang.vncare.vn/vnpthis/main/manager.jsp*"
+      ],
+      "js": [
+        "main.js",
+        "icd_capture.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://bvdksoctrang.vncare.vn/vnpthis/main/manager.jsp*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://gdbhyt.baohiemxahoi.gov.vn/ThongTuyenLSKCB/Index*"
+      ],
+      "js": [
+        "bhyt_portal.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  }
+}
