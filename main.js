@@ -1173,6 +1173,18 @@
       if (!jq || !jq.fn || !jq.fn.jqGrid) return reply({ ok: false, error: "Trang HIS không có jqGrid" });
       const grid = jq("#grdLS");
       if (!grid.length) return reply({ ok: false, error: "Không thấy lưới #grdLS" });
+      // QUÉT theo BHYT: how many rows the search found vs. shown on this page,
+      // and a bigger page size so every visit of the person is on one page.
+      if (action === "gridInfo") {
+        const p = grid.jqGrid("getGridParam") || {};
+        return reply({ ok: true, records: Number(p.records) || 0, reccount: Number(p.reccount) || 0,
+          rowNum: Number(p.rowNum) || 0, page: Number(p.page) || 0, lastpage: Number(p.lastpage) || 0 });
+      }
+      if (action === "gridSetRowNum") {
+        grid.jqGrid("setGridParam", { rowNum: Number(event.data.rowNum) || 500, page: 1 });
+        if (event.data.reload) grid.trigger("reloadGrid");
+        return reply({ ok: true });
+      }
       if (action !== "select") return reply({ ok: false, error: "unknown action" });
       const tr = grid.find("tr.jqgrow").filter((_, row) => row.id === String(rowId))[0];
       if (!tr) return reply({ ok: false, error: "Không thấy dòng " + rowId });

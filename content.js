@@ -157,57 +157,7 @@
   const auditStyle = document.createElement("style");
   auditStyle.id = "hth-audit-style-v38";
   auditStyle.textContent = `
-    .hth-audit-trigger{position:fixed;right:12px;width:42px;height:42px;z-index:2147483645;border-radius:10px;box-shadow:0 3px 14px rgba(0,0,0,.18);font:700 10px Arial,sans-serif;cursor:pointer;padding:0}
-    #hth-dvkt-trigger{top:174px;border:1px solid #e5b6b6;background:#fff0f0;color:#a61b1b}
-    #hth-drug-trigger{top:222px;border:1px solid #c8b5e8;background:#f5efff;color:#6033a5}
-    #hth-contrast-trigger{top:270px;border:1px solid #9bc8b2;background:#eaf7ef;color:#176b3a}
-    .hth-audit-panel{position:fixed;right:62px;top:174px;width:570px;max-width:calc(100vw - 80px);max-height:75vh;z-index:2147483645;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:12px/1.45 Arial,sans-serif;overflow:hidden;display:none}
-    .hth-audit-panel *{box-sizing:border-box}
-    .hth-audit-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;font-weight:700}
-    #hth-dvkt-panel .hth-audit-head{background:#fff0f0;color:#a61b1b}
-    #hth-drug-panel .hth-audit-head{background:#f5efff;color:#6033a5}
-    #hth-contrast-panel .hth-audit-head{background:#eaf7ef;color:#176b3a}
-    .hth-audit-panel button{border:1px solid #b8c2d1;background:#fff;border-radius:5px;padding:4px 7px;cursor:pointer;font-size:11px}
-    .hth-audit-body{padding:10px;overflow:auto;max-height:calc(75vh - 42px)}
-    .hth-audit-note{padding:7px 8px;border-radius:6px;background:#f5f7fa;color:#59636e;margin:0 0 8px}
-    .hth-audit-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:8px 0}
-    .hth-audit-kpi{border:1px solid #e1e6eb;border-radius:7px;padding:7px;min-width:0}
-    .hth-audit-kpi b{display:block;font-size:18px;color:#263238;overflow-wrap:anywhere}
-    .hth-audit-good{background:#eaf7ef;color:#176b3a}
-    .hth-audit-warn{background:#fff7e6;color:#8a5800}
-    .hth-audit-bad{background:#fff0f0;color:#b42318}
-    .hth-audit-section{font-weight:700;margin:12px 0 5px;color:#263238}
-    .hth-audit-table-wrap{overflow:auto;border:1px solid #e1e6eb;border-radius:6px}
-    .hth-audit-panel table{border-collapse:collapse;width:100%;font-size:11px;min-width:500px}
-    .hth-audit-panel th{background:#f1f5f9;text-align:left;position:sticky;top:0}
-    .hth-audit-panel td,.hth-audit-panel th{padding:5px 6px;border-bottom:1px solid #e7ebef;vertical-align:top;overflow-wrap:anywhere}
-    /* Make the once-daily drug rule unmistakable without changing other audit tables. */
-    .hth-audit-section-alert{background:#fff0ee;color:#a32118;border:1px solid #f0aaa4;border-left:5px solid #c62828;border-radius:6px;padding:7px 9px;margin:14px 0 6px;font-size:12px}
-    .hth-audit-table-wrap.hth-audit-frequency-wrap{border:2px solid #d92d20;box-shadow:0 2px 9px rgba(217,45,32,.16)}
-    .hth-audit-panel table.hth-audit-frequency-table{min-width:560px}
-    .hth-audit-frequency-row td{background:#fff1f0;color:#7f1d1d;font-weight:700;border-bottom:1px solid #f4c2be}
-    .hth-audit-frequency-row td:nth-child(4){background:#ffd8d4;color:#981b1b;font-size:12px;font-weight:800;white-space:nowrap}
-    .hth-audit-frequency-row td:nth-child(6){background:#fff8df;color:#7a4b00;font-weight:700}
-    .hth-audit-frequency-row td:last-child{background:#c62828;color:#fff;font-weight:800;white-space:nowrap}
-    /* Mark invalid once-daily medication directly in the main medicine list. */
-    .hth-audit-drug-row-bad td{background:#fff0ee;color:#842018;font-weight:700;border-bottom:1px solid #f2c2bd}
-    .hth-audit-drug-row-bad td:first-child{border-left:4px solid #c62828}
-    .hth-audit-drug-row-bad td:last-child{background:#ffd8d4;color:#981b1b;font-weight:800;white-space:normal;overflow-wrap:anywhere;line-height:1.4}
-    .hth-audit-drug-row-unknown td{background:#fff8e6;color:#76520a;border-bottom:1px solid #f3e0a8}
-    .hth-audit-drug-row-unknown td:first-child{border-left:4px solid #d69e18}
     .hth-audit-muted{color:#68737d;font-size:10px}
-    .hth-audit-summary-single{grid-template-columns:minmax(0,160px)}
-    .hth-audit-panel table.hth-audit-dvkt-table{min-width:700px;table-layout:fixed}
-    .hth-audit-dvkt-table th:nth-child(1){width:88px}
-    .hth-audit-dvkt-table th:nth-child(2){width:150px}
-    .hth-audit-dvkt-table th:nth-child(3){width:34px}
-    .hth-audit-dvkt-table th:nth-child(4),.hth-audit-dvkt-table th:nth-child(5),.hth-audit-dvkt-table th:nth-child(6){width:125px}
-    .hth-audit-dvkt-table th:nth-child(7){width:230px}
-    .hth-audit-dvkt-table td.hth-audit-dvkt-warning-cell{white-space:normal;overflow-wrap:anywhere;line-height:1.4}
-    .hth-audit-dvkt-row-bad td{background:#fff0ee;color:#842018;font-weight:700;border-bottom:1px solid #f2c2bd}
-    .hth-audit-dvkt-row-bad td:first-child{border-left:4px solid #c62828}
-    .hth-audit-dvkt-row-bad td.hth-audit-dvkt-warning-cell{background:#ffd8d4;color:#981b1b;font-weight:800}
-    .hth-audit-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   `;
   (document.head || document.documentElement).appendChild(auditStyle);
 
@@ -218,9 +168,6 @@
   function hthSetOnlyErrors(value) {
     hthOnlyErrors = !!value;
     try { window.localStorage.setItem("hthOnlyErrors", hthOnlyErrors ? "1" : "0"); } catch (_) {}
-    if (dvktUI.panel.style.display !== "none") renderDVKTPanel();
-    if (drugUI.panel.style.display !== "none") renderDrugPanel();
-    if (contrastUI.panel.style.display !== "none") renderContrastPanel();
     lastRenderedSignature = "";
     render(true);
     if (typeof scanRenderResults === "function") { scanFilter.checked = hthOnlyErrors; scanRenderResults(); }
@@ -457,7 +404,7 @@
     for (const header of globalHeaders) addRows(rowsForResultHeader(header));
     // Plain HTML table fallback where the header and data rows share one table.
     for (const table of Array.from(document.querySelectorAll("table,[role='grid']"))) {
-      if (!visibleNode(table) || (table.closest("#his-time-helper, #hth-dvkt-panel, #hth-drug-panel, #hth-contrast-panel"))) continue;
+      if (!visibleNode(table) || (table.closest("#his-time-helper"))) continue;
       const headerRow = Array.from(table.querySelectorAll("tr,[role='row']")).find(tr =>
         Array.from(tr.children || []).some(cell => isResultTimeField("", cell.innerText || cell.textContent || cell.getAttribute("title") || "")));
       if (!headerRow) continue;
@@ -567,7 +514,6 @@
       target.timePoints = basePoints;
       changed = true;
     }
-    if (changed && dvktUI.panel.style.display !== "none") renderDVKTPanel();
   }
   let visibleResultScanTimer = 0;
   let visibleResultGridObserver = null;
@@ -641,19 +587,29 @@
       .map(value => String(value || "").replace(/\s+/g, "").toUpperCase()).filter(Boolean));
   }
   // Thiếu chẩn đoán: each drug below needs at least one matching diagnosis
-  // (main or secondary, from NT.005.HSBA). Drugs match by name, any strength.
+  // (main or secondary, from NT.005.HSBA). Drugs match by mã thuốc BHYT
+  // (row.bhytCode: MA_THUOC from HIS, or the local code mapped in main.js).
   const gastricBaseKeywords = [
     "Trào ngược dạ dày", "Thủng dạ dày", "Loét dạ dày", "Loét hang vị", "Loét tá tràng",
     "Loét tâm vị", "Loét hành tá tràng", "Loét thực quản", "Xuất huyết tiêu hóa"
   ];
+  const vestibularKeywords = ["Rối loạn tiền đình", "Chóng mặt"];
   const drugDiagnosisRules = [
-    { drug: "Vilanta", token: "VILANTA", keywords: [...gastricBaseKeywords, "Viêm dạ dày"] },
-    { drug: "Esomeprazol", token: "ESOMEPRAZOL", keywords: gastricBaseKeywords },
-    { drug: "Celecoxib", token: "CELECOXIB", keywords: [...gastricBaseKeywords, "Viêm dạ dày"] },
-    { drug: "Apitacid", token: "APITACID", keywords: gastricBaseKeywords },
-    { drug: "Kavasdin 5", token: "KAVASDIN5", keywords: [...gastricBaseKeywords, "Viêm dạ dày"] },
-    { drug: "Antilox Plus", token: "ANTILOXPLUS", keywords: [...gastricBaseKeywords, "Viêm dạ dày"] }
+    { drug: "Mã thuốc 40.666", code: "40.666", keywords: gastricBaseKeywords },
+    { drug: "Mã thuốc 40.677", code: "40.677", keywords: gastricBaseKeywords },
+    { drug: "Mã thuốc 40.678", code: "40.678", keywords: gastricBaseKeywords },
+    { drug: "Mã thuốc 40.679", code: "40.679", keywords: gastricBaseKeywords },
+    { drug: "Mã thuốc 40.68", code: "40.68", keywords: gastricBaseKeywords },
+    // No local codes for these two in main.js, so also match the generic name.
+    // "Cinnarizin" is also spelled "Cinarizin".
+    { drug: "Cinnarizin", code: "40.80", name: /CIN+ARIZIN/, keywords: vestibularKeywords },
+    { drug: "Betahistin", code: "40.899", name: /BETAHISTIN/, keywords: vestibularKeywords }
   ];
+  // "40.680" = "40.68": drop spaces and trailing zeros after the dot.
+  function auditDrugCodeKey(value) {
+    const code = String(value ?? "").replace(/\s+/g, "");
+    return /^\d+\.\d+$/.test(code) ? code.replace(/\.?0+$/, "") : code.toUpperCase();
+  }
   // Accent/case-insensitive; tolerates "hoá"/"hóa", punctuation and extra spaces.
   function auditFoldDiagnosisText(value) {
     return String(value ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -675,7 +631,8 @@
   function auditDrugDiagnosisTargets() {
     const medicines = Array.from(auditState.medicineRows.values());
     return drugDiagnosisRules.map(rule => ({
-      rule, rows: medicines.filter(row => domToken(row && row.name).includes(rule.token))
+      rule, rows: medicines.filter(row => auditDrugCodeKey(row && row.bhytCode) === auditDrugCodeKey(rule.code) ||
+        (rule.name && rule.name.test(domToken(row && row.name))))
     })).filter(item => item.rows.length);
   }
   // DVKT "Chụp X-quang ..." must come with the drug Xenetix 300 ordered the same
@@ -721,52 +678,17 @@
     return { matchedServices: uniqueServices, matchedIcd: uniqueIcd };
   }
 
-  const dvktButton = document.createElement("button");
-  dvktButton.id = "hth-dvkt-trigger"; dvktButton.className = "hth-audit-trigger";
-  dvktButton.type = "button"; dvktButton.title = "Kiểm tra quy tắc DVKT"; dvktButton.textContent = "DVKT";
-  (document.body || document.documentElement).appendChild(dvktButton);
-  const drugButton = document.createElement("button");
-  drugButton.id = "hth-drug-trigger"; drugButton.className = "hth-audit-trigger";
-  drugButton.type = "button"; drugButton.title = "Kiểm tra danh sách thuốc"; drugButton.textContent = "THUỐC";
-  (document.body || document.documentElement).appendChild(drugButton);
-  const contrastButton = document.createElement("button");
-  contrastButton.id = "hth-contrast-trigger"; contrastButton.className = "hth-audit-trigger";
-  contrastButton.type = "button"; contrastButton.title = "Đối chiếu DVKT cản quang và thuốc cản quang"; contrastButton.textContent = "CT";
-  (document.body || document.documentElement).appendChild(contrastButton);
-
-  function makeAuditPanel(id, title, closeLabel = "Đóng") {
-    const section = document.createElement("section");
-    section.id = id; section.className = "hth-audit-panel";
-    // Start explicitly hidden so the first button click opens the panel and
-    // hidden panels are not re-rendered on every data update.
-    section.style.display = "none";
-    section.innerHTML = `<div class="hth-audit-head"><span>${title}</span><button type="button" data-audit-act="close">${closeLabel}</button></div><div class="hth-audit-body"></div>`;
-    (document.body || document.documentElement).appendChild(section);
-    return { panel: section, body: section.querySelector(".hth-audit-body") };
-  }
-  const dvktUI = makeAuditPanel("hth-dvkt-panel", "KIỂM TRA DVKT");
-  const drugUI = makeAuditPanel("hth-drug-panel", "KIỂM TRA THUỐC");
-  const contrastUI = makeAuditPanel("hth-contrast-panel", "ĐỐI CHIẾU DVKT – THUỐC CẢN QUANG");
+  // The DVKT / Thuốc / CT checks render into these off-page containers; QUÉT
+  // reads the flagged rows from them (scanCollectFindings).
+  const dvktUI = { body: document.createElement("div") };
+  const drugUI = { body: document.createElement("div") };
+  const contrastUI = { body: document.createElement("div") };
 
   function clearAuditData() {
     auditState.contextKey = ""; auditState.context = {};
     auditState.dvktRows.clear(); auditState.medicineRows.clear();
     auditState.contrastServices.clear(); auditState.contrastMedicines.clear();
     auditState.icdHoSoBenhAnId = ""; auditState.icdData = null;
-    dvktButton.textContent = "DVKT"; drugButton.textContent = "THUỐC"; contrastButton.textContent = "CT";
-    if (dvktUI.panel.style.display !== "none") renderDVKTPanel();
-    if (drugUI.panel.style.display !== "none") renderDrugPanel();
-    if (contrastUI.panel.style.display !== "none") renderContrastPanel();
-  }
-  function addAuditActions(body) {
-    const actions = auditElement("div", "hth-audit-actions");
-    const walkBtn = auditElement("button", "", "Mở tất cả phiếu"); walkBtn.type = "button"; walkBtn.dataset.auditAct = "walk";
-    walkBtn.title = "Tự mở lần lượt mọi phiếu của bệnh nhân đang chọn để thu thập đủ DVKT/thuốc";
-    const filterBtn = auditElement("button", "", hthOnlyErrors ? "Hiện tất cả dòng" : "Chỉ hiện lỗi");
-    filterBtn.type = "button"; filterBtn.dataset.hthToggleErrors = "1";
-    const clearBtn = auditElement("button", "", "Xóa dữ liệu ca này"); clearBtn.type = "button"; clearBtn.dataset.auditAct = "clear";
-    const closeBtn = auditElement("button", "", "Thu gọn"); closeBtn.type = "button"; closeBtn.dataset.auditAct = "close";
-    actions.append(walkBtn, filterBtn, clearBtn, closeBtn); body.appendChild(actions);
   }
   function auditRequiredCompanionDvkt(rows) {
     const triggerCodes = ["02.0304.0134", "02.0309.0138", "02.0262.0136"];
@@ -854,7 +776,6 @@
   function renderDVKTPanel() {
     const body = dvktUI.body; body.replaceChildren();
     const rows = Array.from(auditState.dvktRows.values());
-    dvktButton.textContent = `DVKT ${rows.length}`;
 
     // Chỉ gắn cảnh báo vào đúng dòng DVKT có vi phạm; không hiển thị các khung
     // trạng thái kiểu "chưa thấy mã", "đã kiểm tra đúng" hoặc "chưa đủ mốc".
@@ -1056,7 +977,6 @@
         rowClass: row => row.hasWarning ? "hth-audit-dvkt-row-bad" : "",
         cellClasses: { status: "hth-audit-dvkt-warning-cell" }
       });
-    addAuditActions(body);
   }
   const onceDailyRuleCodes = new Set(["40.666", "40.677", "40.678", "40.679", "40.68", "40.671", "40.662", "40.491"]);
   // BHYT 40.87 (Fexofenadine): maximum one tablet and one administration per day.
@@ -1288,7 +1208,6 @@
   function renderDrugPanel() {
     const body = drugUI.body; body.replaceChildren();
     const rows = Array.from(auditState.medicineRows.values());
-    drugButton.textContent = `THUỐC ${rows.length}`;
     body.appendChild(auditElement("div", "hth-audit-muted", auditCaseLabel(auditState.context)));
 
     // Warnings are attached to the exact medicine row. Missing data and
@@ -1367,7 +1286,6 @@
         rowClass: row => row.hasWarning ? "hth-audit-drug-row-bad" : "",
         cellClasses: { warning: "hth-audit-dvkt-warning-cell" }
       });
-    addAuditActions(body);
   }
   function renderContrastPanel() {
     const body = contrastUI.body; body.replaceChildren();
@@ -1375,7 +1293,6 @@
     const medicines = Array.from(auditState.contrastMedicines.values());
     const serviceQty = services.reduce((sum, row) => sum + auditQty(row.quantity), 0);
     const medicineQty = medicines.reduce((sum, row) => sum + auditQty(row.quantity), 0);
-    contrastButton.textContent = `CT ${services.length}/${medicines.length}`;
     body.appendChild(auditElement("div", "hth-audit-muted", auditCaseLabel(auditState.context)));
 
     const serviceWarnings = new Map();
@@ -1469,40 +1386,6 @@
         rowClass: row => row.hasWarning ? "hth-audit-drug-row-bad" : "",
         cellClasses: { warning: "hth-audit-dvkt-warning-cell" }
       });
-    addAuditActions(body);
-  }
-
-  function toggleAuditPanel(target) {
-    const panels = [dvktUI.panel, drugUI.panel, contrastUI.panel];
-    const opening = target.style.display === "none";
-    for (const panel of panels) panel.style.display = "none";
-    if (opening) {
-      target.style.display = "block";
-      if (target === dvktUI.panel) renderDVKTPanel();
-      else if (target === drugUI.panel) renderDrugPanel();
-      else renderContrastPanel();
-    }
-  }
-  dvktButton.addEventListener("click", () => toggleAuditPanel(dvktUI.panel));
-  drugButton.addEventListener("click", () => toggleAuditPanel(drugUI.panel));
-  contrastButton.addEventListener("click", () => toggleAuditPanel(contrastUI.panel));
-  for (const item of [dvktUI, drugUI, contrastUI]) {
-    item.panel.addEventListener("click", event => {
-      if (event.target.closest("button[data-hth-toggle-errors]")) { hthSetOnlyErrors(!hthOnlyErrors); return; }
-      const button = event.target.closest("button[data-audit-act]");
-      if (!button) return;
-      if (button.dataset.auditAct === "clear") {
-        auditState.dvktRows.clear(); auditState.medicineRows.clear();
-        auditState.contrastServices.clear(); auditState.contrastMedicines.clear();
-        renderDVKTPanel(); renderDrugPanel(); renderContrastPanel(); return;
-      }
-      if (button.dataset.auditAct === "walk") {
-        window.postMessage({ __hthScanRequest: true, id: `walk-${Date.now()}`, action: "walkPhieu" }, "*");
-        showJumpToast("Đang chuẩn bị mở tất cả phiếu…");
-        return;
-      }
-      if (button.dataset.auditAct === "close") item.panel.style.display = "none";
-    });
   }
 
   function bhytText(value) { return String(value ?? "").trim(); }
@@ -2951,7 +2834,7 @@
   }
 
   function isVisibleElement(el) {
-    if (!el || el.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-contrast-panel, #hth-contrast-trigger, #hth-dvkt-panel, #hth-dvkt-trigger, #hth-drug-panel, #hth-drug-trigger, #hth-scan-panel, #hth-scan-trigger")) return false;
+    if (!el || el.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger")) return false;
     const style = getComputedStyle(el);
     return style.display !== "none" && style.visibility !== "hidden" &&
       el.getClientRects().length > 0;
@@ -3084,7 +2967,7 @@
 
   function insideHelperUI(node) {
     const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    return !!(el && el.closest && el.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-contrast-panel, #hth-contrast-trigger, #hth-dvkt-panel, #hth-dvkt-trigger, #hth-drug-panel, #hth-drug-trigger, #hth-scan-panel, #hth-scan-trigger, #hth-jump-toast"));
+    return !!(el && el.closest && el.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger, #hth-jump-toast"));
   }
   function hthClickedCaseHint(target) {
     const row = target && target.closest ? target.closest("tr,[role='row']") : null;
@@ -3247,7 +3130,6 @@
       if (currentHoSoId && incomingHoSoId !== currentHoSoId) return;
       auditState.icdHoSoBenhAnId = incomingHoSoId;
       auditState.icdData = icdData;
-      if (dvktUI.panel.style.display !== "none") renderDVKTPanel();
       return;
     }
     if (event.data.type === "AUDIT_DATA") {
@@ -3279,15 +3161,9 @@
       while (auditState.medicineRows.size > 1000) auditState.medicineRows.delete(auditState.medicineRows.keys().next().value);
       while (auditState.contrastServices.size > 500) auditState.contrastServices.delete(auditState.contrastServices.keys().next().value);
       while (auditState.contrastMedicines.size > 500) auditState.contrastMedicines.delete(auditState.contrastMedicines.keys().next().value);
-      if (dvktUI.panel.style.display !== "none") renderDVKTPanel();
       scheduleVisibleResultScan(0);
       setTimeout(() => scheduleVisibleResultScan(0), 500);
       setTimeout(() => scheduleVisibleResultScan(0), 1100);
-      if (drugUI.panel.style.display !== "none") renderDrugPanel();
-      if (contrastUI.panel.style.display !== "none") renderContrastPanel();
-      dvktButton.textContent = `DVKT ${auditState.dvktRows.size}`;
-      drugButton.textContent = `THUỐC ${auditState.medicineRows.size}`;
-      contrastButton.textContent = `CT ${auditState.contrastServices.size}/${auditState.contrastMedicines.size}`;
       return;
     }
     if (event.data.type !== "SERVICES") return;
@@ -3381,9 +3257,6 @@
     // A newly received interval can change suction comparison even when the service list
     // itself was trimmed or a later response belongs to another service row.
     hthScheduleRender(ventilationChanged ? 45 : 170);
-    // Recalculate the OXY overlap section when a PTTT ventilation interval arrives
-    // after the medicine panel has already been opened.
-    if (ventilationChanged && drugUI.panel.style.display !== "none") renderDrugPanel();
     if (currentRows.some(row => hthIsBedService(row) && (!String(row.start || "").trim() || !String(row.end || "").trim()))) {
       hthScheduleBedTiming(110, 2);
     }
@@ -3460,7 +3333,7 @@
     let tied = false;
 
     for (const row of rows) {
-      if (row.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-contrast-panel, #hth-contrast-trigger, #hth-dvkt-panel, #hth-dvkt-trigger, #hth-drug-panel, #hth-drug-trigger, #hth-scan-panel, #hth-scan-trigger")) continue;
+      if (row.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger")) continue;
       const rowText = String(row.innerText || row.textContent || "").replace(/\s+/g, " ").trim();
       if (!rowText) continue;
       const dates = dateTimesInText(rowText);
@@ -3583,7 +3456,7 @@
   const scanStyle = document.createElement("style");
   scanStyle.id = "hth-scan-style";
   scanStyle.textContent = `
-    #hth-scan-trigger{position:fixed;right:12px;top:318px;width:42px;height:42px;z-index:2147483645;border:1px solid #f0b46b;border-radius:10px;background:#fff4e5;color:#9a4d00;box-shadow:0 3px 14px rgba(0,0,0,.18);font:700 10px Arial,sans-serif;cursor:pointer;padding:0}
+    #hth-scan-trigger{position:fixed;right:12px;top:170px;width:42px;height:42px;z-index:2147483645;border:1px solid #f0b46b;border-radius:10px;background:#fff4e5;color:#9a4d00;box-shadow:0 3px 14px rgba(0,0,0,.18);font:700 10px Arial,sans-serif;cursor:pointer;padding:0}
     #hth-scan-panel{position:fixed;right:62px;top:70px;width:560px;max-width:calc(100vw - 80px);max-height:72vh;z-index:2147483646;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:11px/1.4 Arial,sans-serif;overflow:hidden;display:none}
     #hth-scan-panel *{box-sizing:border-box}
     #hth-scan-panel .sc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;background:#fff4e5;color:#9a4d00;font-weight:700}
@@ -3596,8 +3469,12 @@
     #hth-scan-panel .sc-opts{display:grid;gap:5px;margin:0 0 8px;padding:7px 8px;border:1px solid #eef0f3;border-radius:7px;background:#fcfcfd}
     #hth-scan-panel .sc-opt-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
     #hth-scan-panel .sc-opt-label{width:96px;color:#6b7280;font-weight:700}
+    #hth-scan-panel .sc-opts input.sc-bhyt{width:200px;height:26px;box-sizing:border-box;background:#fff;color:#1f2937;border:1px solid #b8c2d1;border-radius:5px;padding:4px 6px;font-size:11px}
+    #hth-scan-panel .sc-lookup{border:1px solid #c9d7ea;background:#f3f8ff;border-radius:6px;padding:6px 8px;margin-bottom:6px;line-height:1.45}
+    #hth-scan-panel .sc-lookup ul{margin:3px 0 0 16px;padding:0}
+    #hth-scan-panel .sc-lookup summary{cursor:pointer;color:#1f4f8a}
     #hth-scan-panel .sc-opts label{position:relative;cursor:pointer;user-select:none}
-    #hth-scan-panel .sc-opts input{position:absolute;opacity:0;width:0;height:0;margin:0}
+    #hth-scan-panel .sc-opts input[type=checkbox],#hth-scan-panel .sc-opts input[type=radio]{position:absolute;opacity:0;width:0;height:0;margin:0}
     #hth-scan-panel .sc-opts label>span{display:inline-block;padding:2px 9px;border:1px solid #d0d5dd;background:#fff;color:#475467;transition:background .12s,border-color .12s}
     #hth-scan-panel .sc-chip>span{border-radius:12px}
     #hth-scan-panel .sc-chip>span::before{content:"+ ";color:#98a2b3}
@@ -3643,6 +3520,7 @@
   scanButton.textContent = "QUÉT";
   (document.body || document.documentElement).appendChild(scanButton);
 
+  const scanLoadEarly = key => { try { return window.localStorage.getItem(key) || ""; } catch (_) { return ""; } };
   const scanPanel = document.createElement("section");
   scanPanel.id = "hth-scan-panel";
   scanPanel.innerHTML = `<div class="sc-head"><span>QUÉT BỆNH NHÂN</span><div class="sc-head-actions">
@@ -3653,6 +3531,9 @@
     <div class="sc-opts">
       <div class="sc-opt-row"><span class="sc-opt-label">Quét bệnh nhân</span><span class="sc-seg">
         <label title="Quét tất cả bệnh nhân đang hiện trong danh sách HIS"><input type="radio" name="hth-scan-scope" value="all" data-scan-scope><span>Tất cả</span></label><label title="Chỉ quét bệnh nhân đang chọn (hoặc đã tích) trong danh sách HIS"><input type="radio" name="hth-scan-scope" value="selected" data-scan-scope><span>1 người</span></label></span></div>
+      <div class="sc-opt-row"><span class="sc-opt-label">Theo BHYT</span>
+        <input type="text" class="sc-bhyt" data-scan-bhyt placeholder="Mã thẻ BHYT (hoặc 10 số cuối)" title="Tìm theo Mã BHYT để lấy họ tên, năm sinh, địa chỉ; tìm lại theo họ tên + năm sinh; chỉ quét các lần vào viện có cùng địa chỉ">
+        <button type="button" class="sc-primary" data-scan-act="bhyt">Tìm &amp; quét</button></div>
       <div class="sc-opt-row"><span class="sc-opt-label">Kiểm tra</span>
         <label class="sc-chip" title="Kiểm tra xét nghiệm: tự mở tab Xét nghiệm và tất cả phiếu xét nghiệm của từng bệnh nhân"><input type="checkbox" data-scan-tab-xn><span>Xét nghiệm</span></label>
         <label class="sc-chip" title="Kiểm tra thuốc: tự mở tab Thuốc và tất cả đơn thuốc của từng bệnh nhân"><input type="checkbox" data-scan-tab-thuoc><span>Thuốc</span></label>
@@ -3669,6 +3550,18 @@
   const scanResultsEl = scanPanel.querySelector(".sc-results");
   const scanStartBtn = scanPanel.querySelector('[data-scan-act="start"]');
   const scanStopBtn = scanPanel.querySelector('[data-scan-act="stop"]');
+  const scanBhytInput = scanPanel.querySelector("[data-scan-bhyt]");
+  const scanBhytBtn = scanPanel.querySelector('[data-scan-act="bhyt"]');
+  scanBhytInput.value = scanLoadEarly("hthScanBhyt");
+  // HIS listens on the whole page for focus, mouse and key events (modal
+  // dialogs pull focus back to themselves, hotkeys swallow typing), so a click
+  // on the BHYT box never lets you type. Keep these events inside the panel.
+  for (const type of ["mousedown", "pointerdown", "focusin", "keydown", "keypress", "keyup", "input"]) {
+    scanPanel.addEventListener(type, event => event.stopPropagation());
+  }
+  scanBhytInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); scanByBhyt(scanBhytInput.value); }
+  });
   const scanFilter = scanPanel.querySelector("[data-scan-filter]");
   // Show/hide [Thuốc] errors in the scan results (display only; they are still
   // collected, so toggling needs no rescan). Remembered per browser.
@@ -3722,6 +3615,8 @@
   let scanStopRequested = false;
   let scanLastDataAt = 0;
   let scanResults = [];
+  // QUÉT theo BHYT: who was looked up and which visits were kept (shown above the results).
+  let scanLookup = null;
   // Phiếu lists HIS returned for the visit being scanned (diagnostics).
   let scanVisitLists = [];
   // HIS tabs QUÉT opened for the visit being scanned (diagnostics).
@@ -3770,7 +3665,6 @@
         showJumpToast(ev.ok
           ? `Đã mở xong ${ev.opened}/${ev.total} ${kind} · ${tally()}`
           : `Ngừng tự mở ${kind}: ${ev.error || "không rõ lý do"} (${ev.opened || 0}/${ev.total || 0})`, !ev.ok);
-        if (dvktUI.panel.style.display !== "none") renderDVKTPanel();
       }
       return;
     }
@@ -3806,7 +3700,11 @@
     const admissionText = admissionCell ? String(admissionCell.textContent || "").trim() : "";
     const visitDate = auditDateOnly(admissionText) ||
       auditDateOnly((text.match(/\b(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2})/) || [])[1] || "");
-    return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate,
+    const cellText = pattern => { const td = scanCellByField(row, pattern); return td ? String(td.textContent || "").replace(/\s+/g, " ").trim() : ""; };
+    const bhyt = cellText(/_MA_BHYT$|_MABHYT$/i);
+    const address = cellText(/_DIACHI$/i);
+    const birthYear = ((cellText(/_NGAYSINH$|_NAMSINH$/i) || dobText).match(/\b((?:19|20)\d{2})\b/) || [])[1] || "";
+    return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate, bhyt, address, birthYear,
       label: [caseNo, name].filter(Boolean).join(" – ") || text.slice(0, 80) };
   }
   function scanPatientRows() {
@@ -4026,14 +3924,28 @@
     }
     return "";
   }
-  // ---- XÉT NGHIỆM LẶP LẠI TRONG 3 THÁNG TRƯỚC + THÁNG HIỆN TẠI (Bộ mỡ, HbA1C) ----
-  // Cửa sổ tính đúng ngày: xét nghiệm ngày 05/11/2026 thì tìm lại từ ngày
-  // 05/08/2026 (lùi 3 tháng, cùng ngày; ngày không có trong tháng thì lấy ngày cuối tháng).
+  // ---- XÉT NGHIỆM LẶP LẠI CHƯA ĐỦ 90 ± 3 NGÀY (Bộ mỡ, HbA1C) ----
+  // Theo TT 39/2024/TT-BYT: chỉ thanh toán khi chưa làm trong vòng 90 ± 3 ngày,
+  // tức lần sau phải cách lần trước ít nhất 87 ngày. Xét nghiệm ngày 05/11/2026
+  // thì tìm lại từ ngày 11/08/2026 (cách 86 ngày); làm ngày 10/08/2026 (cách
+  // 87 ngày) thì không tính là lặp lại.
   // Một ca có xét nghiệm thuộc một nhóm dưới đây, mà trong cửa sổ đó (ca
   // khác của cùng người bệnh trong danh sách đã quét, hoặc ngày khác trong cùng
   // ca) đã có xét nghiệm cùng nhóm, thì báo lỗi ở ca sau với nhãn của nhóm.
   // Mỗi nhóm so sánh riêng: Bộ mỡ không tính trùng với HbA1C.
+  // Tests are reported only from (today - 3 months) on, like the visits.
   const SCAN_REPEAT_LOOKBACK_MONTHS = 3;
+  // A repeat is allowed once at least this many days have passed (90 - 3).
+  const SCAN_REPEAT_MIN_GAP_DAYS = 87;
+  const SCAN_DAY_MS = 24 * 60 * 60 * 1000;
+  // Whole days from `from` to `to` (both local midnight dates).
+  function scanDaysBetween(from, to) {
+    return Math.round((to - from) / SCAN_DAY_MS);
+  }
+  // Earliest day that is still a repeat of a test done on `date`.
+  function scanRepeatWindowStart(date) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - (SCAN_REPEAT_MIN_GAP_DAYS - 1));
+  }
   const SCAN_REPEAT_TEST_RULES = [
     {
       module: "Bộ mỡ", testText: "xét nghiệm mỡ máu",
@@ -4076,8 +3988,8 @@
   // Watched tests of the selected visit, each with its rule and order day. If
   // HIS gave no order time for a test, fall back to the visit's admission day.
   // Tests are only reported from (today - SCAN_REPEAT_LOOKBACK_MONTHS months,
-  // same day) on, but each of those looks back another window, so keep tests
-  // from two windows back for the comparison.
+  // same day) on, but each of those looks back SCAN_REPEAT_MIN_GAP_DAYS more,
+  // so keep tests from that far back for the comparison.
   function scanReportCutoff() {
     const now = new Date();
     return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_MONTHS);
@@ -4096,7 +4008,7 @@
   }
   function scanCollectRepeatTests(fallbackDay) {
     const tests = new Map();
-    const cutoff = scanLookbackStart(scanReportCutoff(), SCAN_REPEAT_LOOKBACK_MONTHS);
+    const cutoff = scanRepeatWindowStart(scanReportCutoff());
     // time: "HH:mm:ss" of the source value, "" when HIS gave only a date.
     const timeOf = value => (auditDateTimeText(value).split(" ")[1] || "");
     const add = (code, name, day, time = "") => {
@@ -4158,7 +4070,7 @@
         // Older tests are kept only as the "earlier" side of a comparison.
         if (current.date < reportCutoff) continue;
         const result = current.result;
-        const limit = scanLookbackStart(current.date, SCAN_REPEAT_LOOKBACK_MONTHS);
+        const limit = scanRepeatWindowStart(current.date);
         const withTime = (day, time) => time ? `${day} ${time}` : day;
         const windowText = `từ ${withTime(scanFormatDay(limit), current.time)}`;
         const earlier = occurrences.filter(o => {
@@ -4172,11 +4084,12 @@
             item: "", detail: scanTestListText(current.tests),
             // "1 LẦN XÉT NGHIỆM MỠ MÁU - <ngày giờ>: ..." (see the render loop).
             headline: `1 LẦN ${rule.testText.toUpperCase()}`,
-            message: `Lần đầu trong ${SCAN_REPEAT_LOOKBACK_MONTHS} tháng, chưa có ${rule.testText} nào trước đó (${windowText}).`
+            message: `Lần đầu trong ${SCAN_REPEAT_MIN_GAP_DAYS} ngày, chưa có ${rule.testText} nào trước đó (${windowText}).`
           });
           continue;
         }
         const previous = earlier[0];
+        const gapDays = scanDaysBetween(previous.date, current.date);
         // Earlier tests in the window, oldest first: "08/09/2026 07:42:10, 01/10/2026 09:00:00".
         const earlierText = [...earlier].reverse().map(o => withTime(o.day, o.time)).join(", ");
         const where = previous.result === result ? "cùng đợt điều trị" : (previous.result.caseNo || previous.result.label);
@@ -4190,7 +4103,7 @@
 Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${scanTestListText(previous.tests)}${note}`,
           // Times done in the window, this one included: "2 LẦN", "3 LẦN", ...
           headline: `${earlier.length + 1} LẦN ${rule.testText.toUpperCase()}`,
-          message: `Làm lại trong vòng ${SCAN_REPEAT_LOOKBACK_MONTHS} tháng, đã ${rule.testText} ngày ${earlierText} (${windowText}).`
+          message: `Làm lại sau ${gapDays} ngày (chưa đủ 90 ± 3 ngày), đã ${rule.testText} ngày ${earlierText} (${windowText}).`
         });
       }
     }
@@ -4264,7 +4177,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     if (scanned.xn) for (const cells of scanRowsWithClass(contrastUI.body, "tr.hth-audit-dvkt-row-bad, tr.hth-audit-drug-row-bad")) {
       errors.push({ module: "CT", date: scanFirstDay(cells[3], cells[4], cells[5]), time: scanFirstTime(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
     }
-    // [Thiếu chẩn đoán]: a prescribed Vilanta/Esomeprazol without a matching diagnosis.
+    // [Thiếu chẩn đoán]: a drug of drugDiagnosisRules (by mã thuốc) without a matching diagnosis.
     const drugTargets = scanned.thuoc ? auditDrugDiagnosisTargets() : [];
     if (drugTargets.length) {
       const caseIcd = auditMatchingIcdData();
@@ -4318,6 +4231,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
 
   function scanRenderResults() {
     scanResultsEl.replaceChildren();
+    if (scanLookup) scanResultsEl.appendChild(scanLookupBox(scanLookup));
     const onlyErrors = scanFilter.checked;
     for (const result of scanResults) {
       const visibleErrors = scanVisibleErrors(result);
@@ -4411,38 +4325,184 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       }
       scanResultsEl.appendChild(box);
     }
-    if (!scanResultsEl.children.length && scanResults.length) {
+    if (!scanResultsEl.querySelector(".sc-patient") && scanResults.length) {
       scanResultsEl.appendChild(auditElement("div", "hth-empty", "Không có ca nào có lỗi."));
     }
   }
 
-  async function scanAllPatients() {
+  // ---- QUÉT THEO BHYT ----
+  // Mã BHYT changes every year, Mã BA changes every visit and several people
+  // share a name + birth year, so one person's visits are found the way it is
+  // done by hand: (1) search HIS by Mã BHYT -> name, birth year, address;
+  // (2) search again by name + birth year -> every visit of everyone with them;
+  // (3) keep only the visits with the same address, and scan those.
+  const SCAN_SEARCH_FIELDS = ["txtMABENHNHAN", "txtMA_LK", "txtMABENHAN", "txtMA_BHYT", "txtTENBENHNHAN", "txtSDT", "txtCCCD", "txtNGAYSINH"];
+  const SCAN_SEARCH_ROWS = 500;
+  // Loose compare: no accents, case, spaces or punctuation ("Ấp 3, Xã X" = "ap 3 xa x").
+  function scanLooseText(value) {
+    return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "d")
+      .toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+  function scanGridSignature() {
+    const grid = document.getElementById("grdLS");
+    if (!grid) return "";
+    return Array.from(grid.querySelectorAll("tr.jqgrow")).map(r => `${r.id}:${(r.textContent || "").length}`).join(",");
+  }
+  function scanGridLoading() {
+    const el = document.getElementById("load_grdLS");
+    return !!el && getComputedStyle(el).display !== "none";
+  }
+  // Wait for #grdLS to reload after a search: done when the jqGrid loading box
+  // appeared and went away, or the rows changed. If neither happens within
+  // 4 s, the search returned the same rows as before.
+  async function scanWaitGridReload(before) {
+    const t0 = Date.now();
+    let sawLoading = false;
+    while (Date.now() - t0 < 20000) {
+      if (scanStopRequested) return false;
+      await scanSleep(150);
+      if (scanGridLoading()) { sawLoading = true; continue; }
+      if (sawLoading || scanGridSignature() !== before) { await scanSleep(400); return !scanGridLoading(); }
+      if (Date.now() - t0 > 4000) return true;
+    }
+    return false;
+  }
+  // Fill the HIS search form (the other boxes are emptied), press "Tìm kiếm"
+  // and return the rows of #grdLS. missing = rows found but not on this page.
+  async function scanHisSearch(values) {
+    const button = document.getElementById("btnTIMKIEM");
+    if (!button) throw new Error("Không thấy nút Tìm kiếm (btnTIMKIEM). Hãy mở màn hình danh sách bệnh nhân.");
+    for (const id of SCAN_SEARCH_FIELDS) {
+      const el = document.getElementById(id);
+      if (!el) { if (values[id]) throw new Error(`Không thấy ô tìm kiếm ${id}.`); continue; }
+      el.value = values[id] || "";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    // All visits on one page: QUÉT only clicks rows of the current page.
+    await scanMainCall({ action: "gridSetRowNum", rowNum: SCAN_SEARCH_ROWS });
+    const before = scanGridSignature();
+    button.click();
+    if (!await scanWaitGridReload(before)) throw new Error(scanStopRequested ? "Đã dừng." : "HIS không trả kết quả tìm kiếm (quá 20 giây).");
+    // HIS may keep its own page size: reload with a bigger one when rows are missing.
+    let info = await scanMainCall({ action: "gridInfo" });
+    if (info.ok && info.records > info.reccount) {
+      const sig = scanGridSignature();
+      await scanMainCall({ action: "gridSetRowNum", rowNum: Math.max(SCAN_SEARCH_ROWS, info.records), reload: true });
+      await scanWaitGridReload(sig);
+      info = await scanMainCall({ action: "gridInfo" });
+    }
+    const rows = scanPatientRows();
+    return { rows, missing: info.ok && info.records > rows.length ? info.records - rows.length : 0 };
+  }
+  function scanLookupBox(l) {
+    const box = auditElement("div", "sc-lookup");
+    box.appendChild(auditElement("div", "", `Theo BHYT ${l.code}: ${l.name} · năm sinh ${l.birthYear}`));
+    box.appendChild(auditElement("div", "", `Địa chỉ: ${l.addresses.join(" | ")}`));
+    if (l.found !== undefined) {
+      box.appendChild(auditElement("div", "", `Tìm theo họ tên + năm sinh: ${l.found} lần vào viện · cùng địa chỉ: ${l.matched}` +
+        (l.missing ? ` · ${l.missing} dòng không hiện trên trang nên chưa quét` : "")));
+    }
+    if (l.excluded && l.excluded.length) {
+      // Collapsed by default: the list can be long (click to expand).
+      const details = document.createElement("details");
+      details.appendChild(auditElement("summary", "", `Bỏ qua ${l.excluded.length} lần vào viện cùng họ tên, năm sinh nhưng khác địa chỉ`));
+      const ul = document.createElement("ul");
+      for (const x of l.excluded) ul.appendChild(auditElement("li", "", `${x.caseNo || "?"}${x.visitDate ? ` (${x.visitDate})` : ""}: ${x.address || "không có địa chỉ"}`));
+      details.appendChild(ul);
+      box.appendChild(details);
+    }
+    return box;
+  }
+  async function scanByBhyt(input) {
     if (scanRunning) return;
-    const allPatients = scanPatientRows();
+    const raw = String(input || "").replace(/\s+/g, "").toUpperCase();
+    // The HIS box takes the last 10 characters of the card number.
+    const code = raw.slice(-10);
+    if (code.length < 10) { scanStatus.textContent = "Nhập Mã thẻ BHYT (ít nhất 10 ký tự cuối)."; return; }
+    scanStore("hthScanBhyt", raw);
+    scanRunning = true; scanStopRequested = false;
+    scanStartBtn.disabled = true; scanBhytBtn.disabled = true; scanStopBtn.disabled = false;
+    scanResults = []; scanSummaryPrefix = ""; scanLookup = null; scanRenderResults();
+    let lookup = null;
+    let toScan = [];
+    try {
+      if (scanAnyDataTab()) {
+        const listTab = scanFindHisTab(SCAN_LIST_TAB);
+        if (listTab) { scanClickHisTab(listTab); await scanSleep(300); }
+      }
+      // (1) Mã BHYT -> name, birth year, address.
+      scanStatus.textContent = `Bước 1/3: tìm theo Mã BHYT ${code}…`;
+      const first = await scanHisSearch({ txtMA_BHYT: code });
+      const cardRows = first.rows.filter(r => !r.bhyt || r.bhyt.toUpperCase().endsWith(code));
+      if (!cardRows.length) throw new Error(`Không tìm thấy bệnh nhân có Mã BHYT ${code}.`);
+      // The most recent visit gives the name and birth year searched in step 2.
+      const latest = [...cardRows].sort((a, b) => (scanParseDay(b.visitDate) || 0) - (scanParseDay(a.visitDate) || 0))[0];
+      const name = latest.name;
+      const birthYear = latest.birthYear;
+      if (!name || !birthYear) throw new Error("Không đọc được họ tên / năm sinh trong kết quả tìm theo BHYT.");
+      // Every address seen with this card (all the same person).
+      const addresses = new Map();
+      for (const r of cardRows) if (scanLooseText(r.address)) addresses.set(scanLooseText(r.address), r.address);
+      if (!addresses.size) throw new Error("Không đọc được địa chỉ (cột DIACHI) trong kết quả tìm theo BHYT.");
+      lookup = { code, name, birthYear, addresses: [...addresses.values()] };
+      // (2) name + birth year -> everyone with them.
+      scanStatus.textContent = `Bước 2/3: tìm theo họ tên ${name} + năm sinh ${birthYear}…`;
+      const second = await scanHisSearch({ txtTENBENHNHAN: name, txtNGAYSINH: birthYear });
+      // (3) keep the same name, birth year and address only.
+      scanStatus.textContent = "Bước 3/3: lọc theo địa chỉ…";
+      const nameKey = scanLooseText(name);
+      const sameName = second.rows.filter(r => scanLooseText(r.name) === nameKey && r.birthYear === birthYear);
+      toScan = sameName.filter(r => addresses.has(scanLooseText(r.address)));
+      Object.assign(lookup, { found: sameName.length, matched: toScan.length, missing: second.missing,
+        excluded: sameName.filter(r => !addresses.has(scanLooseText(r.address)))
+          .map(r => ({ caseNo: r.caseNo, visitDate: r.visitDate, address: r.address })) });
+      if (!toScan.length) throw new Error("Không có lần vào viện nào cùng họ tên, năm sinh và địa chỉ.");
+    } catch (err) {
+      scanStatus.textContent = String(err && err.message || err);
+      toScan = [];
+    }
+    scanRunning = false;
+    scanStartBtn.disabled = false; scanBhytBtn.disabled = false; scanStopBtn.disabled = true;
+    if (!toScan.length) { scanLookup = lookup; scanRenderResults(); return; }
+    // One person: every visit shares one identity for the Bộ mỡ / HbA1C rules.
+    await scanAllPatients({ patients: toScan, personKey: `BHYT-PERSON:${code}`, lookup });
+  }
+
+  // options (QUÉT theo BHYT): patients = the rows to scan (ignores "Quét bệnh
+  // nhân"), personKey = one identity for all of them (repeat-test rules),
+  // lookup = the note shown above the results.
+  async function scanAllPatients(options = {}) {
+    if (scanRunning) return;
+    scanLookup = options.lookup || null;
+    const allPatients = options.patients || scanPatientRows();
     if (!allPatients.length) {
       scanStatus.textContent = "Không tìm thấy danh sách bệnh nhân (lưới #grdLS). Hãy mở màn hình danh sách bệnh nhân rồi thử lại.";
       return;
     }
     // "Chỉ quét bệnh nhân đã chọn": rows ticked (multiselect) or highlighted in the list.
-    const inScope = scanScope() === "selected" ? allPatients.filter(p => scanIsRowSelected(p.row)) : allPatients;
+    const inScope = options.patients ? allPatients
+      : (scanScope() === "selected" ? allPatients.filter(p => scanIsRowSelected(p.row)) : allPatients);
     if (!inScope.length) {
       scanStatus.textContent = "Chưa chọn bệnh nhân nào trong danh sách HIS. Hãy chọn (hoặc tích) bệnh nhân cần quét, hoặc chuyển sang \"Tất cả\".";
       return;
     }
     // Patients admitted more than SCAN_SKIP_OLDER_MONTHS ago are not scanned.
     const skipCutoff = scanSkipCutoff();
-    const patients = inScope.filter(p => !scanIsTooOld(p.visitDate, skipCutoff)).map((p, i) => ({ ...p, index: i }));
+    const patients = inScope.filter(p => !scanIsTooOld(p.visitDate, skipCutoff))
+      .map((p, i) => ({ ...p, index: i, patientKey: options.personKey || p.patientKey }));
     const skippedOld = inScope.length - patients.length;
     const skippedText = skippedOld ? ` · bỏ qua ${skippedOld} ca vào viện trước ${scanFormatDay(skipCutoff)}` : "";
     if (!patients.length) {
       scanStatus.textContent = `Không có ca nào để quét${skippedText}.`;
+      scanResults = []; scanRenderResults();
       return;
     }
     scanRunning = true; scanStopRequested = false; scanResults = []; scanSummaryPrefix = "";
     const scanned = { xn: scanTabXn.checked, thuoc: scanTabThuoc.checked, pttt: scanTabPttt.checked };
     // While scanning, also open phiếu lists whose tab is not on screen.
     scanMainCall({ action: "setScanMode", value: true, kinds: { dvkt: scanTabXn.checked || scanTabThuoc.checked || scanTabPttt.checked, drug: scanTabThuoc.checked } });
-    scanStartBtn.disabled = true; scanStopBtn.disabled = false;
+    scanStartBtn.disabled = true; scanBhytBtn.disabled = true; scanStopBtn.disabled = false;
     scanRenderResults();
     const grid = document.getElementById("grdLS");
     const originalRow = grid && grid.querySelector("tr.jqgrow.ui-state-highlight, tr.jqgrow[aria-selected='true']");
@@ -4515,7 +4575,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       scanRunning = false;
       scanForcedEncounter = "";
       scanMainCall({ action: "setScanMode", value: false });
-      scanStartBtn.disabled = false; scanStopBtn.disabled = true;
+      scanStartBtn.disabled = false; scanBhytBtn.disabled = false; scanStopBtn.disabled = true;
       // Back to the patient list, then to the patient selected before the scan.
       if (scanAnyDataTab()) {
         const listTab = scanFindHisTab(SCAN_LIST_TAB);
@@ -4554,6 +4614,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     if (!button) return;
     const act = button.dataset.scanAct;
     if (act === "start") scanAllPatients();
+    else if (act === "bhyt") scanByBhyt(scanBhytInput.value);
     else if (act === "stop") { scanStopRequested = true; scanStatus.textContent = "Đang dừng..."; }
     else if (act === "close") scanPanel.style.display = "none";
   });
