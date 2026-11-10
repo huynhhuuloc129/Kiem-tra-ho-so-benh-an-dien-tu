@@ -8,12 +8,6 @@
   if (prior) prior.remove();
   const priorStyle = document.getElementById("his-time-helper-style-v31");
   if (priorStyle) priorStyle.remove();
-  const priorBHYT = document.getElementById("his-bhyt-helper-trigger");
-  if (priorBHYT) priorBHYT.remove();
-  const priorBHYTPanel = document.getElementById("his-bhyt-result");
-  if (priorBHYTPanel) priorBHYTPanel.remove();
-  const priorBHYTStyle = document.getElementById("his-bhyt-helper-style-v32");
-  if (priorBHYTStyle) priorBHYTStyle.remove();
   const priorContrastButton = document.getElementById("hth-contrast-trigger");
   if (priorContrastButton) priorContrastButton.remove();
   const priorContrastPanel = document.getElementById("hth-contrast-panel");
@@ -36,12 +30,6 @@
   // replace/trim currentRows, but must not erase earlier PT0034 intervals in the same case.
   const ventilationIntervalCache = new Map();
   let ventilationIntervalCase = "";
-  // Cache detail responses by case number. HIS requests are asynchronous and may
-  // complete out of order while the user clicks through the patient list.
-  const patientByCase = new Map();
-  let lastBHYTVisibleCase = "";
-  let lastVisiblePatientAttemptCase = "";
-  let lastVisiblePatientAttemptAt = 0;
   let minimized = true;
 
   const style = document.createElement("style");
@@ -111,51 +99,7 @@
     jumpToastTimer = setTimeout(() => { jumpToast.style.display = "none"; }, 4200);
   }
 
-  // Separate BHYT button: the existing clock button and timing panel remain unchanged.
-  const bhytStyle = document.createElement("style");
-  bhytStyle.id = "his-bhyt-helper-style-v32";
-  bhytStyle.textContent = `
-    #his-bhyt-helper-trigger{position:fixed;right:12px;top:122px;width:42px;height:42px;z-index:2147483646;border:1px solid #8cb4e8;border-radius:10px;background:#eaf2ff;color:#174ea6;box-shadow:0 3px 14px rgba(0,0,0,.18);font:700 11px Arial,sans-serif;cursor:pointer;padding:0}
-    #his-bhyt-result{position:fixed;right:12px;top:170px;width:380px;max-width:calc(100vw - 24px);max-height:65vh;z-index:2147483646;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:13px/1.45 Arial,sans-serif;overflow:hidden;display:none}
-    #his-bhyt-result *{box-sizing:border-box}
-    #his-bhyt-result .bh-head{display:flex;align-items:center;justify-content:space-between;padding:9px 10px;background:#eaf2ff;font-weight:700;color:#174ea6}
-    #his-bhyt-result .bh-close{border:1px solid #b8c2d1;background:#fff;border-radius:5px;padding:3px 8px;cursor:pointer}
-    #his-bhyt-result .bh-body{padding:10px;overflow:auto;max-height:calc(65vh - 40px)}
-    #his-bhyt-result .bh-message{padding:8px;border-radius:6px;background:#f5f7fa;margin-bottom:8px;overflow-wrap:anywhere}
-    #his-bhyt-result .bh-good{color:#137333;font-weight:700}
-    #his-bhyt-result .bh-warn{color:#b06000;font-weight:700}
-    #his-bhyt-result .bh-bad{color:#c00000;font-weight:700}
-    #his-bhyt-result .bh-line{margin:4px 0;overflow-wrap:anywhere}
-    #his-bhyt-result .bh-expiry-box{margin:7px 0;padding:7px 8px;border-radius:6px;background:#f5f7fa;overflow-wrap:anywhere}
-    #his-bhyt-result .bh-new-card-box{margin:7px 0;padding:8px;border:1px solid #efc54b;border-radius:6px;background:#fff7d6;color:#a12622;font-weight:700;overflow-wrap:anywhere}
-    #his-bhyt-result .bh-two-card-box{margin:7px 0;padding:8px;border:1px solid #dc2626;border-radius:6px;background:#fff1f2;color:#991b1b;font-weight:800;overflow-wrap:anywhere}
-    #his-bhyt-result .bh-old-card-box{margin:7px 0;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc;color:#334155;font-weight:700;overflow-wrap:anywhere}
-    #his-bhyt-result .bh-history-button{margin-top:8px;border:1px solid #8cb4e8;border-radius:5px;background:#eaf2ff;color:#174ea6;font:700 12px Arial,sans-serif;padding:7px 10px;cursor:pointer}
-    #his-bhyt-result .bh-history-button:disabled{opacity:.65;cursor:wait}
-    #his-bhyt-result .bh-history-output{margin-top:7px;padding:8px;border:1px solid #d5dce7;border-radius:6px;background:#fbfcff;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;font:12px/1.45 Arial,sans-serif}
-  `;
-  (document.head || document.documentElement).appendChild(bhytStyle);
-
-  const bhytButton = document.createElement("button");
-  bhytButton.id = "his-bhyt-helper-trigger";
-  bhytButton.type = "button";
-  bhytButton.title = "Đối chiếu BHYT của ca đang chọn";
-  bhytButton.textContent = "BHYT";
-  // Scan extension: no BHYT button (needs the portal and service worker of the
-  // main extension).
-
-  const bhytResult = document.createElement("section");
-  bhytResult.id = "his-bhyt-result";
-  bhytResult.innerHTML = `<div class="bh-head"><span>ĐỐI CHIẾU BHYT</span><button class="bh-close" type="button">Đóng</button></div><div class="bh-body"><div class="bh-message">Chọn một ca trên HIS rồi bấm nút BHYT.</div></div>`;
-
-  const bhytBody = bhytResult.querySelector(".bh-body");
-  let activeHistoryOutput = null;
-  let activeHistoryButton = null;
-  let activeHistoryCaseNo = "";
-  bhytResult.querySelector(".bh-close").addEventListener("click", () => { bhytResult.style.display = "none"; });
-
-  // Three isolated audit modules. The two original tools above (service-time
-  // monitoring and BHYT comparison) are intentionally left in their own code.
+  // Audit modules (DVKT / Thuốc / CT checks used by QUÉT).
   const auditStyle = document.createElement("style");
   auditStyle.id = "hth-audit-style-v38";
   auditStyle.textContent = `
@@ -1390,633 +1334,6 @@
       });
   }
 
-  function bhytText(value) { return String(value ?? "").trim(); }
-  function bhytNorm(value) {
-    return bhytText(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  }
-  function bhytDateOnly(value) {
-    const s = bhytText(value);
-    let m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
-    if (m) return `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3]}`;
-    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (m) return `${String(m[3]).padStart(2, "0")}/${String(m[2]).padStart(2, "0")}/${m[1]}`;
-    return s.split(/[ T]/)[0];
-  }
-  // DOB comparison rule: a year-only value is equivalent to 01/01 of that
-  // year only when the other side explicitly shows 01/01 of the same year.
-  // This prevents e.g. HIS 23/02/1987 from being accepted against portal 1987.
-  function parseBHYTBirthDate(value) {
-    const s = bhytText(value);
-    let m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\b|$)/);
-    if (m) {
-      const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
-      const d = new Date(year, month - 1, day);
-      if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
-      return { day, month, year, yearOnly: false, display: `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}` };
-    }
-    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\b|$)/);
-    if (m) {
-      const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
-      const d = new Date(year, month - 1, day);
-      if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
-      return { day, month, year, yearOnly: false, display: `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}` };
-    }
-    m = s.match(/^(\d{4})$/);
-    if (m) return { day: null, month: null, year: Number(m[1]), yearOnly: true, display: m[1] };
-    return null;
-  }
-
-  function compareBHYTBirthDates(hisValue, portalValue) {
-    const his = parseBHYTBirthDate(hisValue);
-    const portal = parseBHYTBirthDate(portalValue);
-    if (!his || !portal) {
-      return { status: "warn", text: "Chưa đủ dữ liệu để đối chiếu ngày sinh" };
-    }
-    if (his.yearOnly && portal.yearOnly) {
-      if (his.year !== portal.year) return { status: "bad", text: "KHÔNG KHỚP — năm sinh khác nhau" };
-      return { status: "warn", text: "Cùng năm sinh, nhưng cả hai bên chỉ có năm — chưa xác nhận được ngày/tháng" };
-    }
-    if (his.yearOnly || portal.yearOnly) {
-      const full = his.yearOnly ? portal : his;
-      const yearOnly = his.yearOnly ? his : portal;
-      const matches = yearOnly.year === full.year && full.day === 1 && full.month === 1;
-      return matches
-        ? { status: "good", text: "Khớp — bên chỉ có năm tương ứng 01/01 cùng năm" }
-        : { status: "bad", text: "KHÔNG KHỚP — chỉ khớp năm khi ngày đầy đủ là 01/01 cùng năm" };
-    }
-    const matches = his.year === portal.year && his.month === portal.month && his.day === portal.day;
-    return matches
-      ? { status: "good", text: "Khớp" }
-      : { status: "bad", text: "KHÔNG KHỚP — kiểm tra hồ sơ" };
-  }
-  function showBHYTMessage(message, kind = "warn") {
-    bhytResult.style.display = "block";
-    bhytBody.replaceChildren();
-    const line = document.createElement("div");
-    line.className = "bh-message " + (kind === "bad" ? "bh-bad" : kind === "good" ? "bh-good" : "bh-warn");
-    line.textContent = message;
-    bhytBody.appendChild(line);
-  }
-  function addBHYTLine(parent, label, value, kind = "") {
-    const el = document.createElement("div");
-    el.className = "bh-line" + (kind ? " " + kind : "");
-    const strong = document.createElement("strong");
-    strong.textContent = label + ": ";
-    el.append(strong, document.createTextNode(bhytText(value) || "Chưa có dữ liệu"));
-    parent.appendChild(el);
-  }
-  function readHighlightedPatientRowCase() {
-    // Prefer the selected row in the patient grid when available. The top banner
-    // may lag behind a row click while VNPT-HIS is still loading the detail panel.
-    const casePattern = /\b(BA\d{6,})\b/i;
-    const cardPattern = /\b[A-Z]{2}\d{10,16}\b/i;
-    const yellow = new Set([
-      "rgb(255,235,59)", "rgb(255,241,118)", "rgb(255,235,120)",
-      "rgb(255,238,88)", "rgb(255,235,153)", "rgb(255,235,140)",
-      "rgb(255,237,139)", "rgb(255,239,128)", "rgb(255,235,150)"
-    ]);
-    const rows = Array.from(document.querySelectorAll("tr, [role='row']"))
-      .filter(isVisibleElement)
-      .map(row => {
-        const cells = Array.from(row.querySelectorAll("td, th, [role='gridcell']"));
-        const texts = cells.map(cell => String(cell.innerText || cell.textContent || "").trim().replace(/\s+/g, " ")).filter(Boolean);
-        const rowText = String(row.innerText || row.textContent || "").trim().replace(/\s+/g, " ");
-        const cls = String(row.className || "").toLowerCase();
-        const selected = row.getAttribute("aria-selected") === "true" || /selected|highlight|current/.test(cls) ||
-          [row, ...cells].some(el => yellow.has((getComputedStyle(el).backgroundColor || "").replace(/\s/g, "")));
-        return { row, text: texts.join(" | ") || rowText, selected };
-      })
-      .filter(item => item.selected && casePattern.test(item.text) && cardPattern.test(item.text))
-      .sort((a, b) => a.text.length - b.text.length || a.row.getBoundingClientRect().top - b.row.getBoundingClientRect().top);
-    const match = rows.length ? rows[0].text.match(casePattern) : null;
-    return match ? match[1].toUpperCase() : "";
-  }
-
-  function readCurrentCaseNoForBHYT() {
-    const selectedRowCase = readHighlightedPatientRowCase();
-    if (selectedRowCase) return selectedRowCase;
-    const baPattern = /^\s*(BA\d{6,})\s*\|/i;
-    const candidates = Array.from(document.querySelectorAll("h1,h2,h3,div,span,td,th,label,p"))
-      .filter(isVisibleElement)
-      .map(el => ({ el, text: String(el.innerText || el.textContent || "").trim().replace(/\s+/g, " ") }))
-      .filter(item => item.text.length <= 260 && baPattern.test(item.text))
-      .sort((a, b) => a.text.length - b.text.length || a.el.getBoundingClientRect().top - b.el.getBoundingClientRect().top);
-    if (candidates.length) {
-      const match = candidates[0].text.match(baPattern);
-      if (match) return match[1].toUpperCase();
-    }
-    return readVisibleEncounter();
-  }
-  function normalizeBHYTCard(value) {
-    return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  }
-
-  function isValidBHYTCard(value, caseNo = "") {
-    const card = normalizeBHYTCard(value);
-    const currentCase = normalizeBHYTCard(caseNo);
-    // The HIS case number starts with BA and can match the generic two-letter
-    // + digits pattern. It must never be accepted as a health insurance card.
-    return /^[A-Z]{2}\d{10,16}$/.test(card) && card !== currentCase && !/^BA\d{6,}$/.test(card);
-  }
-
-  function readCardFromPatientGrid(expectedCase) {
-    const wanted = bhytNorm(expectedCase);
-    if (!wanted) return "";
-    const rows = Array.from(document.querySelectorAll("tr, [role='row']")).filter(isVisibleElement);
-    for (const row of rows) {
-      const cells = Array.from(row.querySelectorAll("td, th, [role='gridcell']"));
-      if (!cells.length) continue;
-      const cellTexts = cells.map(cell => String(cell.innerText || cell.textContent || "").trim().replace(/\s+/g, " "));
-      const containsExactCase = cellTexts.some(text => bhytNorm(text) === wanted);
-      if (!containsExactCase) continue;
-
-      // Prefer the cell under the explicit "Mã BHYT" header. This avoids
-      // mistaking the first BA-prefixed case number for the card number.
-      const table = row.closest("table");
-      if (table) {
-        const headerRows = Array.from(table.querySelectorAll("tr, [role='row']"));
-        for (const headerRow of headerRows) {
-          const headerCells = Array.from(headerRow.querySelectorAll("th, td, [role='columnheader']"));
-          const cardIndex = headerCells.findIndex(cell => {
-            const label = bhytNorm(cell.innerText || cell.textContent || "");
-            return label === "MABHYT" || label === "MATHẺ" || label === "MATHEBHYT";
-          });
-          if (cardIndex >= 0 && cellTexts[cardIndex] && isValidBHYTCard(cellTexts[cardIndex], expectedCase)) {
-            return normalizeBHYTCard(cellTexts[cardIndex]);
-          }
-        }
-      }
-
-      // Fallback to a card-shaped token from this exact row, excluding the
-      // BA-prefixed case number and any token equal to the case number.
-      const rowText = String(row.innerText || row.textContent || "").replace(/\s+/g, " ");
-      const tokens = Array.from(rowText.matchAll(/\b([A-Z]{2}\d{10,16})\b/gi), match => match[1]);
-      const card = tokens.find(token => isValidBHYTCard(token, expectedCase));
-      if (card) return card.toUpperCase();
-    }
-    return "";
-  }
-
-  function readVisiblePatientFromHIS(expectedCase) {
-    // Fallback for cases whose detail REST response is not captured: read the
-    // visible banner but resolve the card from the selected grid's Mã BHYT cell
-    // first. Never interpret the BA-prefixed case number as an insurance card.
-    const caseNo = String(expectedCase || "").trim().toUpperCase();
-    if (!caseNo) return null;
-    const candidates = Array.from(document.querySelectorAll("div,span,p,section,td,th,label"))
-      .filter(isVisibleElement)
-      .map(el => String(el.innerText || el.textContent || "").trim().replace(/\s+/g, " "))
-      .filter(text => text.length >= 35 && text.length <= 1400 && /^\s*BA\d{6,}\s*\|/i.test(text))
-      .filter(text => {
-        const m = text.match(/^\s*(BA\d{6,})\s*\|/i);
-        return m && bhytNorm(m[1]) === bhytNorm(caseNo);
-      })
-      .sort((a, b) => a.length - b.length);
-
-    for (const text of candidates) {
-      const parts = text.split("|").map(part => part.trim());
-      if (parts.length < 4) continue;
-      const name = parts[1] || "";
-      const dobPart = parts[2] || "";
-      const dobMatch = dobPart.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{4}|\d{4}-\d{1,2}-\d{1,2}|\b\d{4}\b)/);
-      const gridCard = readCardFromPatientGrid(caseNo);
-      const tokens = Array.from(text.matchAll(/\b([A-Z]{2}\d{10,16})\b/gi), match => match[1]);
-      const bannerCard = tokens.find(token => isValidBHYTCard(token, caseNo)) || "";
-      const card = gridCard || bannerCard;
-      if (!name || !dobMatch || !isValidBHYTCard(card, caseNo)) continue;
-      const cached = patientByCase.get(bhytNorm(caseNo)) || null;
-      return {
-        caseNo,
-        patientId: cached ? cached.patientId : "",
-        card: normalizeBHYTCard(card),
-        name,
-        dob: bhytDateOnly(dobMatch[1]),
-        gender: cached ? String(cached.gender || "") : ((text.match(/\|\s*(Nam|Nữ|Khác)\s*\|/i) || [])[1] || ""),
-        registrationFacility: cached ? String(cached.registrationFacility || "") : "",
-        kv: cached ? String(cached.kv || "") : "",
-        cardValidityPeriod: cached ? String(cached.cardValidityPeriod || "") : "",
-        hisCardStart: cached ? String(cached.hisCardStart || "") : "",
-        hisCardExpiry: cached ? String(cached.hisCardExpiry || "") : "",
-        admissionDate: cached ? String(cached.admissionDate || "") : "",
-        dischargeDate: cached ? String(cached.dischargeDate || "") : ""
-      };
-    }
-    return null;
-  }
-
-  function isCompleteBHYTPatient(patient) {
-    return !!(patient && patient.caseNo && isValidBHYTCard(patient.card, patient.caseNo) && patient.name && patient.dob);
-  }
-
-  function patientForExactCase(caseNo, allowVisibleFallback = true) {
-    const cached = patientByCase.get(bhytNorm(caseNo));
-    if (isCompleteBHYTPatient(cached)) {
-      return {
-        caseNo: String(cached.caseNo), patientId: String(cached.patientId || ""),
-        card: String(cached.card), name: String(cached.name),
-        dob: bhytDateOnly(cached.dob), kv: String(cached.kv || ""),
-        gender: String(cached.gender || ""), registrationFacility: String(cached.registrationFacility || ""),
-        cardValidityPeriod: String(cached.cardValidityPeriod || ""),
-        hisCardStart: String(cached.hisCardStart || ""), hisCardExpiry: String(cached.hisCardExpiry || ""),
-        admissionDate: String(cached.admissionDate || ""),
-        dischargeDate: String(cached.dischargeDate || "")
-      };
-    }
-    // Reading the entire visible HIS banner/grid is a last-resort fallback and is
-    // deliberately not repeated inside the wait loop.
-    if (!allowVisibleFallback) return null;
-    const visiblePatient = readVisiblePatientFromHIS(caseNo);
-    return isCompleteBHYTPatient(visiblePatient) ? visiblePatient : null;
-  }
-
-  async function selectedPatientForBHYT() {
-    let visibleCase = readCurrentCaseNoForBHYT();
-    if (!visibleCase) {
-      return { error: "Chưa xác định được mã bệnh án của ca đang chọn. Em chọn dòng bệnh nhân, chờ phần thông tin phía trên đổi theo rồi bấm BHYT nhé." };
-    }
-
-    // Wait briefly for the RestService response triggered by the selected row.
-    // If the user clicks another case during this wait, stop instead of silently
-    // switching the lookup target; never reuse the previous case's patient object.
-    const requestedCase = visibleCase;
-    const deadline = Date.now() + 1800;
-    // Do the costly visible-grid fallback at most once. During the wait, consult the
-    // cached case selection and patient response map only; don't rescan the whole DOM
-    // every 120 ms on a long-stay chart.
-    let patient = patientForExactCase(requestedCase, true);
-    if (patient && isCompleteBHYTPatient(patient) && bhytNorm(patient.caseNo) === bhytNorm(requestedCase)) return { patient };
-    while (Date.now() <= deadline) {
-      const nowVisibleCase = currentVisibleEncounter || requestedCase;
-      if (nowVisibleCase && bhytNorm(nowVisibleCase) !== bhytNorm(requestedCase)) {
-        return { error: "Em vừa chuyển sang ca khác trong lúc HIS đang tải. Chế đã dừng để tránh tra nhầm; chờ banner cập nhật đúng ca rồi bấm BHYT lại nhé." };
-      }
-      patient = patientForExactCase(requestedCase, false);
-      if (patient && isCompleteBHYTPatient(patient) && bhytNorm(patient.caseNo) === bhytNorm(requestedCase)) {
-        return { patient };
-      }
-      await new Promise(resolve => setTimeout(resolve, 120));
-    }
-
-    return { error: "HIS chưa trả đủ thông tin chi tiết của ca đang chọn. Em không cần đóng/mở tiện ích nữa: hãy bấm chọn ca, chờ banner HIS đổi đúng ca rồi bấm BHYT lại. Nếu chỉ một ca vẫn thiếu, có thể HIS chưa trả dữ liệu chi tiết cho ca đó." };
-  }
-
-  function syncBHYTSelection(caseNoHint = "") {
-    // Prefer the case identifier gathered by the single scheduled scan. Avoid
-    // scanning the full HIS DOM again from this function.
-    const caseNo = caseNoHint || readCurrentCaseNoForBHYT();
-    if (!caseNo) return;
-    const normalized = bhytNorm(caseNo);
-    if (!normalized) return;
-    const changed = normalized !== lastBHYTVisibleCase;
-    if (changed) lastBHYTVisibleCase = normalized;
-
-    const cached = patientByCase.get(normalized) || null;
-    // The visible-banner fallback is comparatively expensive because it scans
-    // the HIS grid and banner. Only try it on a new selection, then at most once
-    // every 1.5 seconds while the BHYT panel is open and still waiting for data.
-    const panelOpen = getComputedStyle(bhytResult).display !== "none";
-    const waitingForSelection = panelOpen && bhytResult.dataset.mode === "selection";
-    const now = Date.now();
-    const canRetryVisible = waitingForSelection && (
-      lastVisiblePatientAttemptCase !== normalized || now - lastVisiblePatientAttemptAt >= 1500
-    );
-    const shouldReadVisible = !cached && panelOpen && !changed && canRetryVisible;
-    let visiblePatient = cached;
-    if (shouldReadVisible) {
-      lastVisiblePatientAttemptCase = normalized;
-      lastVisiblePatientAttemptAt = now;
-      visiblePatient = readVisiblePatientFromHIS(caseNo);
-    }
-    const ready = isCompleteBHYTPatient(visiblePatient);
-    bhytButton.dataset.caseNo = caseNo;
-    bhytButton.dataset.patientReady = ready ? "1" : "0";
-    bhytButton.title = "Đối chiếu BHYT của ca đang chọn" + (ready ? " (đã nạp thông tin HIS)" : " (đang chờ dữ liệu HIS)") + ": " + caseNo;
-
-    if (changed && panelOpen) {
-      // Clear the old case's result immediately; keep the panel open so the user
-      // does not have to close/reopen it for each row in the HIS grid.
-      bhytResult.dataset.caseNo = caseNo;
-      bhytResult.dataset.mode = "selection";
-      showBHYTMessage(
-        ready
-          ? "Đã cập nhật ca " + caseNo + ". Bấm BHYT để tra cứu ca mới."
-          : "Đã chuyển sang ca " + caseNo + ". Đang chờ thông tin ca mới từ HIS…",
-        "warn"
-      );
-    } else if (ready && panelOpen && bhytResult.dataset.mode === "selection" &&
-               bhytNorm(bhytResult.dataset.caseNo || "") === normalized) {
-      // Update the still-open panel once the current case's data arrives.
-      bhytResult.dataset.mode = "selection-ready";
-      showBHYTMessage("Đã nạp thông tin ca " + caseNo + " từ HIS. Bấm BHYT để tra cứu.", "good");
-    }
-  }
-
-  function renderBHYTResult(result) {
-    bhytResult.style.display = "block";
-    bhytResult.dataset.mode = "result";
-    bhytBody.replaceChildren();
-    const requested = result && result.requestedPatient ? result.requestedPatient : {};
-    const notification = bhytText(result && result.notification);
-    const message = document.createElement("div");
-    message.className = "bh-message";
-    // Do not dump the portal's raw text/history into the panel. All relevant
-    // fields are rendered as structured lines below, after card-specific validation.
-    if (result && result.resultFound && result.responseMatchesPatient) {
-      message.textContent = "Đã nhận kết quả BHYT của đúng mã thẻ đang tra.";
-    } else if (result && result.staleResult) {
-      message.textContent = "Chưa xác nhận được kết quả mới cho đúng mã thẻ. Em kiểm tra thông báo trên cổng rồi thử lại.";
-    } else {
-      message.textContent = "Chưa xác định được kết quả cho đúng mã thẻ đang tra. Em kiểm tra trực tiếp trên cổng.";
-    }
-    bhytBody.appendChild(message);
-
-    const data = result || {};
-    // A portal notice can show a previous card and a newly issued card at once.
-    // Make the two-card case explicit and keep each validity period beside its own code.
-    const hasTwoDistinctCards = Boolean(data.mainCard && data.mainCard.card && data.newCard && data.newCard.card
-      && bhytNorm(data.mainCard.card) !== bhytNorm(data.newCard.card));
-    if (hasTwoDistinctCards) {
-      const twoCardAlert = document.createElement("div");
-      twoCardAlert.className = "bh-two-card-box";
-      twoCardAlert.textContent = "CỔNG THÔNG BÁO 2 MÃ THẺ KHÁC NHAU — kiểm tra mã thẻ và thời hạn của từng thẻ trước khi xử lý.";
-      bhytBody.appendChild(twoCardAlert);
-
-      const mainCardBox = document.createElement("div");
-      mainCardBox.className = "bh-old-card-box";
-      mainCardBox.textContent = "Mã thẻ trong thông báo chính: " + data.mainCard.card
-        + ". Hạn thẻ: " + (data.mainCard.start || "chưa đọc được") + " – " + (data.mainCard.expiry || "chưa đọc được") + ".";
-      bhytBody.appendChild(mainCardBox);
-    }
-    if (data.newCard && data.newCard.card) {
-      const newCardBox = document.createElement("div");
-      newCardBox.className = "bh-new-card-box";
-      const newCardParts = ["Mã thẻ mới được cấp: " + data.newCard.card + "."];
-      if (data.newCard.start || data.newCard.expiry) {
-        newCardParts.push("Hạn thẻ từ " + (data.newCard.start || "chưa đọc được") + " đến " + (data.newCard.expiry || "chưa đọc được") + ".");
-      }
-      if (data.newCard.facilityCode) newCardParts.push("Mã cơ sở KCB ban đầu: " + data.newCard.facilityCode + ".");
-      if (data.newCard.facilityName) newCardParts.push("Tên cơ sở KCB ban đầu: " + data.newCard.facilityName + ".");
-      newCardBox.textContent = newCardParts.join(" ");
-      bhytBody.appendChild(newCardBox);
-    }
-
-    // Critical check: an inpatient stay may begin under the old card and end under
-    // the newly-issued card. A lookup of only one valid card can look fine while the
-    // HIS encounter still needs both card numbers recorded for the crossed period.
-    if (data.mainCard && data.newCard && data.mainCard.card && data.newCard.card) {
-      addBHYTLine(bhytBody, "Ngày vào viện HIS", requested.admissionDate || "Không đọc được từ HIS", requested.admissionDate ? "" : "bh-warn");
-      addBHYTLine(bhytBody, "Ngày ra viện HIS", requested.dischargeDate || "Chưa có/không đọc được từ HIS", requested.dischargeDate ? "" : "bh-warn");
-    }
-    if (data.mainCard && data.newCard && data.mainCard.card && data.newCard.card && requested.admissionDate && requested.dischargeDate) {
-      const parseDay = value => {
-        const m = String(value || "").trim().match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
-        if (!m) return null;
-        const d = new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
-        return Number.isNaN(d.getTime()) ? null : d.getTime();
-      };
-      const fmt = value => {
-        const t = parseDay(value);
-        if (t === null) return String(value || "không đọc được");
-        const d = new Date(t);
-        return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
-      };
-      const admit = parseDay(requested.admissionDate);
-      const discharge = parseDay(requested.dischargeDate);
-      const oldStart = parseDay(data.mainCard.start);
-      const oldEnd = parseDay(data.mainCard.expiry);
-      const newStart = parseDay(data.newCard.start);
-      const newEnd = parseDay(data.newCard.expiry);
-      const inRange = (date, start, end) => date !== null && start !== null && end !== null && date >= start && date <= end;
-      const admitCoveredByOld = inRange(admit, oldStart, oldEnd);
-      const dischargeCoveredByNew = inRange(discharge, newStart, newEnd);
-      const spansCardTransition = admit !== null && discharge !== null && admit <= discharge
-        && newStart !== null && admit < newStart && discharge >= newStart
-        && admitCoveredByOld && dischargeCoveredByNew
-        && bhytNorm(data.mainCard.card) !== bhytNorm(data.newCard.card);
-      if (spansCardTransition) {
-        const twoCardStay = document.createElement("div");
-        twoCardStay.className = "bh-two-card-box";
-        const currentCode = bhytNorm(requested.card);
-        const currentlySelected = currentCode === bhytNorm(data.newCard.card)
-          ? `HIS hiện trả về mã ${requested.card} (mã mới).`
-          : currentCode === bhytNorm(data.mainCard.card)
-            ? `HIS hiện trả về mã ${requested.card} (mã cũ).`
-            : `HIS hiện trả về mã ${requested.card || "không đọc được"}.`;
-        twoCardStay.textContent = `CẢNH BÁO ĐỢT ĐIỀU TRỊ VẮT QUA THỜI ĐIỂM ĐỔI THẺ: Ngày vào viện ${fmt(requested.admissionDate)} thuộc hạn thẻ cũ ${data.mainCard.card} (${data.mainCard.start} – ${data.mainCard.expiry}); ngày ra viện ${fmt(requested.dischargeDate)} thuộc hạn thẻ mới ${data.newCard.card} (${data.newCard.start} – ${data.newCard.expiry}). ${currentlySelected} Cần kiểm tra và bảo đảm hồ sơ HIS ghi nhận đủ cả 2 mã thẻ cũ và mới; kết quả tra cứu một mã thẻ không đủ để xác nhận hồ sơ đã nhập đúng.`;
-        bhytBody.appendChild(twoCardStay);
-      }
-    } else if (data.mainCard && data.newCard && data.mainCard.card && data.newCard.card) {
-      const missingStayDates = document.createElement("div");
-      missingStayDates.className = "bh-expiry-box bh-warn";
-      missingStayDates.textContent = "Chưa xác định được ca có vắt qua thời điểm đổi thẻ hay không vì HIS chưa cung cấp đủ ngày vào viện và ngày ra viện. Em kiểm tra hai ngày này trước khi kết luận.";
-      bhytBody.appendChild(missingStayDates);
-    }
-
-    // If the portal returns only the currently queried card, detect a likely
-    // missing previous card when the admission date predates that card's validity
-    // but the discharge date falls inside its validity. The old card number cannot
-    // be inferred from a one-card response, so explicitly prompt a history/manual check.
-    if (!(data.mainCard && data.mainCard.card && data.newCard && data.newCard.card)
-        && requested.admissionDate && requested.dischargeDate && data.cardStart && data.cardExpiry) {
-      const parseTransitionDay = value => {
-        const m = String(value || "").trim().match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
-        if (!m) return null;
-        const time = Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-        return Number.isFinite(time) ? time : null;
-      };
-      const admission = parseTransitionDay(requested.admissionDate);
-      const discharge = parseTransitionDay(requested.dischargeDate);
-      const currentStart = parseTransitionDay(data.cardStart);
-      const currentEnd = parseTransitionDay(data.cardExpiry);
-      const currentCardCode = bhytNorm(data.card || requested.card || "");
-      const requestedCardCode = bhytNorm(requested.card || "");
-      const cardMatches = !!currentCardCode && !!requestedCardCode && currentCardCode === requestedCardCode;
-      const crossedIntoCurrentCard = admission !== null && discharge !== null && currentStart !== null && currentEnd !== null
-        && admission < currentStart && discharge >= currentStart && discharge <= currentEnd;
-      if (crossedIntoCurrentCard && cardMatches) {
-        const warning = document.createElement("div");
-        warning.className = "bh-two-card-box";
-        warning.textContent = `CẢNH BÁO: Có thể thiếu mã thẻ cũ. Ngày vào viện ${requested.admissionDate} trước hạn thẻ hiện tại (${data.cardStart} – ${data.cardExpiry}), ngày ra viện ${requested.dischargeDate} nằm trong hạn. Cổng chỉ trả 1 mã; kiểm tra lịch sử thẻ và xác minh đủ 2 mã trên HIS.`;
-        bhytBody.appendChild(warning);
-      }
-    }
-
-    if (requested.cardValidityPeriod || requested.hisCardStart || requested.hisCardExpiry) {
-      addBHYTLine(
-        bhytBody,
-        "Thời gian thẻ trên HIS (THOIGIAN)",
-        requested.cardValidityPeriod || [requested.hisCardStart, requested.hisCardExpiry].filter(Boolean).join(" – ") || "Không đọc được từ HIS"
-      );
-    }
-    if (data.cardStart || data.cardExpiry) {
-      addBHYTLine(bhytBody, "Thời hạn thẻ BHYT trên cổng", [data.cardStart, data.cardExpiry].filter(Boolean).join(" – "));
-    }
-    if (requested.hisCardStart && requested.hisCardExpiry) {
-      if (data.cardStart && data.cardExpiry) {
-        const normDate = value => {
-          const m = String(value || "").trim().match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-          return m ? `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3]}` : "";
-        };
-        const startMatches = normDate(requested.hisCardStart) === normDate(data.cardStart);
-        const endMatches = normDate(requested.hisCardExpiry) === normDate(data.cardExpiry);
-        const periodMatches = startMatches && endMatches;
-        addBHYTLine(
-          bhytBody,
-          "Đối chiếu gia hạn HIS – cổng",
-          periodMatches ? "Khớp ngày bắt đầu và kết thúc" : `KHÔNG KHỚP — HIS ${requested.hisCardStart} – ${requested.hisCardExpiry}; cổng ${data.cardStart} – ${data.cardExpiry}`,
-          periodMatches ? "bh-good" : "bh-bad"
-        );
-      } else {
-        addBHYTLine(bhytBody, "Đối chiếu gia hạn HIS – cổng", "Chưa đủ dữ liệu thời hạn từ cổng để so sánh", "bh-warn");
-      }
-    } else {
-      addBHYTLine(bhytBody, "Đối chiếu gia hạn HIS – cổng", "HIS chưa trả được trường THOIGIAN dạng ngày bắt đầu–kết thúc", "bh-warn");
-    }
-    const expStatus = String(data.expiryStatus || "unknown");
-    const expKind = expStatus === "expired" ? "bh-bad" : (expStatus === "soon" || expStatus === "today" ? "bh-warn" : "bh-good");
-    if (data.expiryMessage && (data.cardExpiry || ["expired", "soon", "today"].includes(expStatus))) {
-      const expiryBox = document.createElement("div");
-      expiryBox.className = "bh-expiry-box " + expKind;
-      expiryBox.textContent = "Cảnh báo gia hạn: " + data.expiryMessage;
-      bhytBody.appendChild(expiryBox);
-    }
-    addBHYTLine(bhytBody, "Mã thẻ HIS", requested.card || "");
-    const portalCard = data.card || (notification && bhytNorm(notification).includes(bhytNorm(requested.card)) ? requested.card : "");
-    addBHYTLine(bhytBody, "Mã thẻ cổng", portalCard || "Không đọc tự động được");
-    if (portalCard) {
-      const cardMatches = bhytNorm(portalCard) === bhytNorm(requested.card);
-      addBHYTLine(bhytBody, "Đối chiếu mã thẻ", cardMatches ? "Khớp" : "KHÔNG KHỚP — kiểm tra hồ sơ", cardMatches ? "bh-good" : "bh-bad");
-    }
-    addBHYTLine(bhytBody, "Họ tên HIS", requested.name || "");
-    addBHYTLine(bhytBody, "Họ tên cổng", data.name || "Không đọc tự động được");
-    if (data.name) {
-      const nameMatches = bhytNorm(data.name) === bhytNorm(requested.name);
-      addBHYTLine(bhytBody, "Đối chiếu họ tên", nameMatches ? "Khớp" : "KHÔNG KHỚP — kiểm tra hồ sơ", nameMatches ? "bh-good" : "bh-bad");
-    }
-    addBHYTLine(bhytBody, "Ngày sinh HIS", requested.dob || "");
-    addBHYTLine(bhytBody, "Ngày sinh cổng", data.dob || "Không đọc tự động được");
-    const dobComparison = compareBHYTBirthDates(requested.dob, data.dob);
-    addBHYTLine(
-      bhytBody,
-      "Đối chiếu ngày sinh",
-      dobComparison.text,
-      dobComparison.status === "good" ? "bh-good" : dobComparison.status === "bad" ? "bh-bad" : "bh-warn"
-    );
-    addBHYTLine(bhytBody, "Giới tính HIS", requested.gender || "Không đọc tự động được");
-    addBHYTLine(bhytBody, "Giới tính cổng", data.gender || "Không đọc thấy trong thông báo");
-    if (requested.gender && data.gender) {
-      const genderNorm = v => bhytNorm(v).replace(/^(1|nam)$/i, "NAM").replace(/^(2|nu)$/i, "NU");
-      const genderMatches = genderNorm(requested.gender) === genderNorm(data.gender);
-      addBHYTLine(bhytBody, "Đối chiếu giới tính", genderMatches ? "Khớp" : "KHÔNG KHỚP — kiểm tra hồ sơ", genderMatches ? "bh-good" : "bh-bad");
-    }
-    addBHYTLine(bhytBody, "Nơi đăng ký KCB ban đầu trên cổng (mã)", data.registrationFacility || "Không đọc thấy trong thông báo");
-    if (requested.registrationFacility) {
-      addBHYTLine(bhytBody, "Nơi đăng ký KCB ban đầu HIS", requested.registrationFacility);
-      if (data.registrationFacility) {
-        const facilityMatches = bhytNorm(requested.registrationFacility) === bhytNorm(data.registrationFacility);
-        addBHYTLine(bhytBody, "Đối chiếu nơi đăng ký KCB ban đầu", facilityMatches ? "Khớp" : "KHÔNG KHỚP — kiểm tra hồ sơ", facilityMatches ? "bh-good" : "bh-bad");
-      }
-    }
-    if (data.kv) {
-      const kvMatches = requested.kv && bhytNorm(requested.kv) === bhytNorm(data.kv);
-      addBHYTLine(bhytBody, "KV/K trên cổng", data.kv, requested.kv ? (kvMatches ? "bh-good" : "bh-warn") : "");
-      if (requested.kv) addBHYTLine(bhytBody, "Đối chiếu KV/K HIS", kvMatches ? "Khớp" : "Khác với trường DT_SINHSONG trên HIS", kvMatches ? "bh-good" : "bh-warn");
-    } else {
-      // If HIS has a KV/K value but the current card-matched portal notice does not,
-      // this is not a confirmed match. Make the missing portal value visible as a
-      // red review warning rather than silently showing only "not found".
-      addBHYTLine(
-        bhytBody,
-        "KV/K trên cổng",
-        "Không hiển thị trong thông báo hiện tại",
-        requested.kv ? "bh-bad" : "bh-warn"
-      );
-      if (requested.kv) {
-        addBHYTLine(
-          bhytBody,
-          "CẢNH BÁO KV/K",
-          `HIS có ${requested.kv}, nhưng cổng không hiển thị KV/K — cần kiểm tra`,
-          "bh-bad"
-        );
-      }
-    }
-    if (data.needsCaptcha) addBHYTLine(bhytBody, "Xác thực", "Cổng yêu cầu xác thực bổ sung; cần thao tác thủ công", "bh-warn");
-    const note = document.createElement("div"); note.className = "bh-line"; note.style.color = "#5f6368"; note.style.marginTop = "8px";
-    note.textContent = "Kết quả hỗ trợ đối chiếu. Em xác nhận đúng người bệnh và kiểm tra trực tiếp trên cổng trước khi xử lý hồ sơ.";
-    bhytBody.appendChild(note);
-
-    const historyButton = document.createElement("button");
-    historyButton.type = "button";
-    historyButton.className = "bh-history-button";
-    historyButton.textContent = "Tra lịch sử gia hạn thẻ BHYT";
-    historyButton.title = "Mở mục LS Thẻ BHYT trên cổng đang đăng nhập và đọc kết quả nếu trang cho phép";
-    const historyOutput = document.createElement("div");
-    historyOutput.className = "bh-history-output";
-    historyOutput.style.display = "none";
-    historyButton.addEventListener("click", () => {
-      const caseNo = String(requested.caseNo || "");
-      const visibleCase = readCurrentCaseNoForBHYT();
-      if (caseNo && visibleCase && bhytNorm(caseNo) !== bhytNorm(visibleCase)) {
-        historyOutput.style.display = "block";
-        historyOutput.textContent = "HIS đã chuyển sang ca khác. Em tra cứu lại ca hiện tại trước khi mở lịch sử thẻ để tránh nhầm hồ sơ.";
-        return;
-      }
-      activeHistoryOutput = historyOutput;
-      activeHistoryButton = historyButton;
-      activeHistoryCaseNo = caseNo;
-      historyButton.disabled = true;
-      historyButton.textContent = "Đang tra lịch sử thẻ…";
-      historyOutput.style.display = "block";
-      historyOutput.textContent = "Đang yêu cầu cổng mở mục LS Thẻ BHYT…";
-      chrome.runtime.sendMessage({ type: "BHYT_CARD_HISTORY", patient: requested, sourceCase: caseNo }, response => {
-        if (chrome.runtime.lastError) {
-          historyOutput.textContent = "Không kết nối được tiện ích. Em tải lại trang HIS và cổng BHYT rồi thử lại nhé.";
-          historyButton.disabled = false;
-          historyButton.textContent = "Tra lịch sử gia hạn thẻ BHYT";
-          return;
-        }
-        if (!response || !response.ok) {
-          historyOutput.textContent = (response && response.message) || "Cổng chưa phản hồi yêu cầu lịch sử thẻ.";
-          historyButton.disabled = false;
-          historyButton.textContent = "Tra lịch sử gia hạn thẻ BHYT";
-        } else {
-          historyOutput.textContent = response.message || "Đã yêu cầu cổng đọc lịch sử thẻ; đang chờ dữ liệu…";
-        }
-      });
-    });
-    bhytBody.append(historyButton, historyOutput);
-    activeHistoryOutput = null;
-    activeHistoryButton = null;
-    activeHistoryCaseNo = "";
-  }
-  bhytButton.addEventListener("click", async () => {
-    bhytButton.disabled = true;
-    const originalText = bhytButton.textContent;
-    bhytButton.textContent = "...";
-    try {
-      const selected = await selectedPatientForBHYT();
-      if (selected.error) { showBHYTMessage(selected.error, "bad"); return; }
-      // Re-read the banner immediately before sending to reduce race conditions.
-      const currentCase = readCurrentCaseNoForBHYT();
-      if (!currentCase || bhytNorm(currentCase) !== bhytNorm(selected.patient.caseNo)) {
-        showBHYTMessage("Ca HIS vừa thay đổi trong lúc tải dữ liệu. Em chờ banner ổn định rồi bấm BHYT lại nhé.", "bad");
-        return;
-      }
-      bhytResult.dataset.caseNo = selected.patient.caseNo;
-      bhytResult.dataset.mode = "loading";
-      bhytResult.style.display = "block";
-      showBHYTMessage("Đang chuyển thông tin ca " + selected.patient.caseNo + " sang cổng giám định BHYT…", "warn");
-      chrome.runtime.sendMessage({ type: "BHYT_LOOKUP", patient: selected.patient, sourceCase: selected.patient.caseNo }, response => {
-        if (chrome.runtime.lastError) { showBHYTMessage("Không kết nối được tiện ích. Em kiểm tra tiện ích Edge đã bật chưa nhé.", "bad"); return; }
-        if (!response || !response.ok) { showBHYTMessage((response && response.message) || "Không nhận được phản hồi từ cổng BHYT.", "bad"); return; }
-        showBHYTMessage(response.message || "Đã gửi yêu cầu tra cứu.", "good");
-      });
-    } finally {
-      bhytButton.disabled = false;
-      bhytButton.textContent = originalText;
-    }
-  });
-
   function parseDate(value) {
     const m = String(value || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     return m ? new Date(+m[3], +m[2]-1, +m[1], +m[4], +m[5], +(m[6] || 0)) : null;
@@ -2836,7 +2153,7 @@
   }
 
   function isVisibleElement(el) {
-    if (!el || el.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger")) return false;
+    if (!el || el.closest("#his-time-helper, #hth-scan-panel, #hth-scan-trigger")) return false;
     const style = getComputedStyle(el);
     return style.display !== "none" && style.visibility !== "hidden" &&
       el.getClientRects().length > 0;
@@ -2918,7 +2235,6 @@
     // The selected service row can be passed directly from the click handler.
     // Avoid scanning every row and reading computed styles when we already know it.
     const nextSelection = hintedSelection || currentVisibleSelection;
-    const selectedCase = hintedEncounter || (bhytResult.style.display !== "none" ? readHighlightedPatientRowCase() : "") || nextEncounter;
 
     if (nextEncounter && currentVisibleEncounter && nextEncounter !== currentVisibleEncounter) {
       clearStoredRows();
@@ -2935,7 +2251,6 @@
 
     if (nextEncounter) currentVisibleEncounter = nextEncounter;
     if (nextSelection) currentVisibleSelection = nextSelection;
-    if (bhytResult.style.display !== "none") syncBHYTSelection(selectedCase);
   }
 
   // Coalesce explicit user actions/API events. Unlike the previous whole-body
@@ -2969,7 +2284,7 @@
 
   function insideHelperUI(node) {
     const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    return !!(el && el.closest && el.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger, #hth-jump-toast"));
+    return !!(el && el.closest && el.closest("#his-time-helper, #hth-scan-panel, #hth-scan-trigger, #hth-jump-toast"));
   }
   function hthClickedCaseHint(target) {
     const row = target && target.closest ? target.closest("tr,[role='row']") : null;
@@ -2992,10 +2307,10 @@
     lastEncounterCheckAt = Date.now();
   }
   // Do not run expensive page-wide checks on every input/keypress or every DOM mutation.
-  // Only process patient-row clicks, explicit form changes while the BHYT panel is open,
-  // and the few navigation events that can change the current HIS record.
+  // Only process patient-row clicks, explicit form changes and the few
+  // navigation events that can change the current HIS record.
   document.addEventListener("change", event => {
-    if (!insideHelperUI(event.target) && bhytResult.style.display !== "none") scheduleEncounterCheck(180);
+    if (!insideHelperUI(event.target)) scheduleEncounterCheck(180);
   }, true);
   document.addEventListener("click", event => {
     if (insideHelperUI(event.target)) return;
@@ -3021,7 +2336,7 @@
         clickFollowupTimer = 0;
         scheduleEncounterCheck(0, { caseNo: caseHint });
       }, 300);
-    } else if (timingRecord && bhytResult.style.display !== "none") {
+    } else if (timingRecord) {
       const row = event.target.closest("tr,[role='row']");
       scheduleEncounterCheck(120, { selection: row ? String(row.innerText || row.textContent || "") : "" });
     }
@@ -3069,38 +2384,10 @@
     if (event.source !== window || !event.data ||
         (event.data.__hisTimeHelperV31 !== true && event.data.__hisTimeHelperIcdV1 !== true)) return;
     if (event.data.type === "PATIENT" && event.data.patient && typeof event.data.patient === "object") {
+      // A patient-detail response may follow a case switch: re-check the open case
+      // (one scheduled DOM scan per response burst).
       const p = event.data.patient;
-      if (p.caseNo && p.card && p.name && p.dob) {
-        const normalizedCase = bhytNorm(p.caseNo);
-        const incomingPatient = {
-          caseNo: String(p.caseNo || ""), patientId: String(p.patientId || ""), card: String(p.card || ""),
-          name: String(p.name || ""), dob: bhytDateOnly(p.dob), kv: String(p.kv || ""),
-          gender: String(p.gender || ""), registrationFacility: String(p.registrationFacility || ""),
-          cardValidityPeriod: String(p.cardValidityPeriod || ""),
-          hisCardStart: String(p.hisCardStart || ""), hisCardExpiry: String(p.hisCardExpiry || ""),
-          admissionDate: String(p.admissionDate || ""),
-          dischargeDate: String(p.dischargeDate || "")
-        };
-        // Several RestService responses can describe the same case. A later,
-        // smaller response may omit THOIGIAN or admission/discharge dates after
-        // an earlier detail response supplied them. Merge non-empty fields only
-        // so an incomplete response cannot erase already captured values.
-        const previousPatient = patientByCase.get(normalizedCase) || {};
-        const patientRecord = { ...previousPatient };
-        for (const [field, value] of Object.entries(incomingPatient)) {
-          if (value !== null && value !== undefined && String(value).trim() !== "") {
-            patientRecord[field] = value;
-          }
-        }
-        patientByCase.set(normalizedCase, patientRecord);
-        if (patientByCase.size > 200) {
-          const oldestKey = patientByCase.keys().next().value;
-          if (oldestKey !== undefined) patientByCase.delete(oldestKey);
-        }
-        // RestService may respond many times during one screen refresh. Defer
-        // case resolution so response bursts trigger one scheduled DOM scan.
-        if (bhytResult.style.display !== "none") scheduleEncounterCheck(120);
-      }
+      if (p.caseNo && p.card && p.name && p.dob) scheduleEncounterCheck(120);
       return;
     }
     if (event.data.type === "ICD_DATA" && event.data.__hisTimeHelperIcdV1 === true) {
@@ -3335,7 +2622,7 @@
     let tied = false;
 
     for (const row of rows) {
-      if (row.closest("#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger")) continue;
+      if (row.closest("#his-time-helper, #hth-scan-panel, #hth-scan-trigger")) continue;
       const rowText = String(row.innerText || row.textContent || "").replace(/\s+/g, " ").trim();
       if (!rowText) continue;
       const dates = dateTimesInText(rowText);
@@ -3383,36 +2670,6 @@
     const tr = findHisServiceRow(event.target);
     if (tr) focusMatchingCard(tr);
   }, true);
-
-  chrome.runtime.onMessage.addListener(message => {
-    if (!message) return;
-    if (message.type === "BHYT_CARD_HISTORY_RESULT") {
-      const requestedCase = message.requestedPatient && message.requestedPatient.caseNo ? String(message.requestedPatient.caseNo) : "";
-      const visibleCase = readCurrentCaseNoForBHYT();
-      if (requestedCase && visibleCase && bhytNorm(requestedCase) !== bhytNorm(visibleCase)) return;
-      if (!activeHistoryOutput || !document.contains(activeHistoryOutput)) return;
-      if (activeHistoryCaseNo && requestedCase && bhytNorm(activeHistoryCaseNo) !== bhytNorm(requestedCase)) return;
-      const history = message.result || {};
-      activeHistoryOutput.style.display = "block";
-      activeHistoryOutput.textContent = history.ok
-        ? ("LỊCH SỬ THẺ BHYT\n" + String(history.historyText || "Đã mở lịch sử thẻ nhưng không có nội dung đọc được.").slice(0, 8000))
-        : (history.message || "Chưa đọc được lịch sử thẻ. Em xem kết quả trực tiếp trên cổng BHYT nhé.");
-      if (activeHistoryButton) {
-        activeHistoryButton.disabled = false;
-        activeHistoryButton.textContent = "Tra lịch sử gia hạn thẻ BHYT";
-      }
-      return;
-    }
-    if (message.type !== "BHYT_RESULT") return;
-    const result = message.result || {};
-    const requestedCase = result.requestedPatient && result.requestedPatient.caseNo ? String(result.requestedPatient.caseNo) : "";
-    const visibleCase = readCurrentCaseNoForBHYT();
-    if (requestedCase && visibleCase && bhytNorm(requestedCase) !== bhytNorm(visibleCase)) {
-      showBHYTMessage("Cổng vừa trả kết quả cho ca " + requestedCase + ", nhưng HIS đang chọn ca " + visibleCase + ". Chế không hiển thị kết quả cũ để tránh nhầm hồ sơ.", "bad");
-      return;
-    }
-    renderBHYTResult(result);
-  });
 
   panel.addEventListener("click", event => {
     if (event.target.closest("button[data-hth-toggle-errors]")) { hthSetOnlyErrors(!hthOnlyErrors); return; }
@@ -3543,7 +2800,6 @@
 </div>
       <div class="sc-opt-row"><span class="sc-opt-label">Hiện</span>
         <label class="sc-chip" title="Bật: chỉ hiện ca và dòng có lỗi. Tắt: hiện tất cả dòng xét nghiệm, có lỗi và không lỗi"><input type="checkbox" data-scan-filter><span>Chỉ hiện lỗi</span></label>
-        <label class="sc-chip" title="Hiện các lỗi [Thuốc]"><input type="checkbox" data-scan-drug><span>Lỗi thuốc</span></label>
 </div>
     </div>
     <div class="sc-results"></div></div>`;
@@ -3565,13 +2821,9 @@
     if (event.key === "Enter") { event.preventDefault(); scanByBhyt(scanBhytInput.value); }
   });
   const scanFilter = scanPanel.querySelector("[data-scan-filter]");
-  // Show/hide [Thuốc] errors in the scan results (display only; they are still
-  // collected, so toggling needs no rescan). Remembered per browser.
-  const scanDrugToggle = scanPanel.querySelector("[data-scan-drug]");
-  try { scanDrugToggle.checked = window.localStorage.getItem("hthScanShowDrug") !== "0"; } catch (_) { scanDrugToggle.checked = true; }
+  // Every collected error is shown ([Thuốc] errors included).
   function scanVisibleErrors(result) {
-    return result.errors.filter(err =>
-      scanDrugToggle.checked || err.module !== "Thuốc");
+    return result.errors || [];
   }
   // "Hoàn tất: 4/4 ca đã quét" part of the status line; counts are added from the visible errors.
   let scanSummaryPrefix = "";
@@ -3579,8 +2831,7 @@
     if (!scanSummaryPrefix) return;
     const errorCases = scanResults.filter(r => scanVisibleErrors(r).length).length;
     const totalErrors = scanResults.reduce((sum, r) => sum + scanVisibleErrors(r).length, 0);
-    const hidden = [scanDrugToggle.checked ? "" : "Thuốc"].filter(Boolean);
-    scanStatus.textContent = `${scanSummaryPrefix} · ${errorCases} ca có lỗi · ${totalErrors} lỗi${hidden.length ? ` (đang ẩn lỗi ${hidden.join(", ")})` : ""}.`;
+    scanStatus.textContent = `${scanSummaryPrefix} · ${errorCases} ca có lỗi · ${totalErrors} lỗi.`;
     scanButton.textContent = errorCases ? `QUÉT ${errorCases}` : "QUÉT";
   }
   // Scan scope (all rows / only the rows ticked or highlighted in #grdLS) and
@@ -4247,8 +3498,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       const right = auditElement("span", "sc-head-actions");
       right.appendChild(auditElement("span",
         `sc-badge ${hasError ? "sc-badge-bad" : (noData ? "sc-badge-none" : "sc-badge-good")}`,
-        hasError ? `${visibleErrors.length} lỗi` : (noData ? "Không có dữ liệu" :
-          ((result.errors || []).length ? `Đang ẩn ${(result.errors || []).length} lỗi` : "Không lỗi"))));
+        hasError ? `${visibleErrors.length} lỗi` : (noData ? "Không có dữ liệu" : "Không lỗi")));
       const selectBtn = auditElement("button", "", "Chọn ca"); selectBtn.type = "button";
       selectBtn.dataset.scanSelect = String(result.index);
       right.appendChild(selectBtn);
@@ -4595,11 +3845,6 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
   });
   scanFilter.checked = hthOnlyErrors;
   scanFilter.addEventListener("change", () => hthSetOnlyErrors(scanFilter.checked));
-  scanDrugToggle.addEventListener("change", () => {
-    try { window.localStorage.setItem("hthScanShowDrug", scanDrugToggle.checked ? "1" : "0"); } catch (_) {}
-    scanRenderResults();
-    if (!scanRunning) scanUpdateSummary();
-  });
   scanPanel.addEventListener("click", event => {
     const select = event.target.closest("button[data-scan-select]");
     if (select) {
