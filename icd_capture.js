@@ -65,10 +65,13 @@
   function parseSecondaryDiagnoses(value) {
     const text = String(value ?? "").trim();
     if (!text) return [];
-    return text.split(";").map(part => part.trim()).filter(Boolean).map(part => {
+    return text.split(/[;\n]/).map(part => part.trim()).filter(Boolean).map(part => {
+      // "K21.0-Name", "K21.0 - Name", "K21.0 – Name", "(K21.0) Name", "K21.0: Name".
+      const match = part.match(/^\(?\s*([A-Z]\d{2}(?:\.\d{1,2})?[*+]?)\s*\)?\s*[-–—:]?\s*(.*)$/i);
+      if (match) return { code: match[1].toUpperCase(), name: match[2].trim(), source: "BENHPHU" };
       const separator = part.indexOf("-");
       const code = (separator >= 0 ? part.slice(0, separator) : part).trim().toUpperCase();
-      const name = separator >= 0 ? part.slice(separator + 1).trim() : "";
+      const name = separator >= 0 ? part.slice(separator + 1).trim() : part;
       return code ? { code, name, source: "BENHPHU" } : null;
     }).filter(Boolean);
   }
@@ -122,6 +125,7 @@
     let admissionTime = "";
     let hasMainField = false;
     let hasSecondaryField = false;
+    const rawParts = [];
     for (const record of records) {
       const keys = new Set(Object.keys(record).map(normalize));
       if (keys.has("BENHCHINHCODE")) hasMainField = true;
@@ -131,6 +135,7 @@
       if (!mainCode && currentMainCode) mainCode = currentMainCode;
       if (!mainName && currentMainName) mainName = currentMainName;
       if (!admissionTime) admissionTime = pickField(record, "THOIGIANVAOVIEN");
+      rawParts.push(currentMainName, pickField(record, "BENHPHU"));
       if (currentMainCode) diagnoses.push({ code: currentMainCode, name: currentMainName, source: "BENHCHINHCODE" });
       diagnoses.push(...parseSecondaryDiagnoses(pickField(record, "BENHPHU")));
     }
@@ -139,7 +144,13 @@
     const seenCodes = new Set();
     for (const diagnosis of diagnoses) {
       const code = normalize(diagnosis.code);
-      if (!code || seenCodes.has(code)) continue;
+      if (!code) continue;
+      if (seenCodes.has(code)) {
+        // Keep a name found later for a code first seen without one.
+        const earlier = deduped.find(item => item.code === code);
+        if (earlier && !earlier.name && diagnosis.name) earlier.name = String(diagnosis.name).trim();
+        continue;
+      }
       seenCodes.add(code);
       deduped.push({ code, name: String(diagnosis.name || "").trim(), source: diagnosis.source || "" });
     }
@@ -150,6 +161,7 @@
       mainCode,
       mainName,
       admissionTime,
+      rawText: rawParts.filter(Boolean).join(" ; "),
       diagnoses: deduped,
       codes: deduped.map(item => item.code),
       hasMainField,

@@ -241,6 +241,10 @@
     contrastServices: new Map(), contrastMedicines: new Map(),
     icdHoSoBenhAnId: "", icdData: null
   };
+  // Every NT.005.HSBA diagnosis payload seen, by HOSOBENHANID. The response can
+  // arrive before the page shows the new case (and HIS may not resend it when
+  // a case is reopened), so it is kept here instead of being dropped.
+  const icdCacheByHoSoId = new Map();
   function auditText(value) { return String(value ?? "").trim(); }
   function auditQty(value) {
     const s = auditText(value).replace(/,/g, ".").replace(/[^0-9.\-]/g, "");
@@ -615,9 +619,13 @@
     return input && "value" in input ? auditNormalizeHoSoId(input.value) : "";
   }
   function auditMatchingIcdData() {
+    const visibleId = auditCurrentHoSoId() || auditNormalizeHoSoId(auditState.context && auditState.context.hoSoBenhAnId);
+    if (visibleId && visibleId !== auditNormalizeHoSoId(auditState.icdHoSoBenhAnId) && icdCacheByHoSoId.has(visibleId)) {
+      auditState.icdHoSoBenhAnId = visibleId;
+      auditState.icdData = icdCacheByHoSoId.get(visibleId);
+    }
     const data = auditState.icdData;
     if (!data || !auditState.icdHoSoBenhAnId) return null;
-    const visibleId = auditCurrentHoSoId() || auditNormalizeHoSoId(auditState.context && auditState.context.hoSoBenhAnId);
     if (visibleId && visibleId !== auditNormalizeHoSoId(auditState.icdHoSoBenhAnId)) return null;
     return data;
   }
@@ -652,7 +660,7 @@
       .replace(/[\u0111\u0110]/g, "d").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   }
   function auditDiagnosisNames(icdData) {
-    return [icdData && icdData.mainName,
+    return [icdData && icdData.mainName, icdData && icdData.rawText,
       ...(Array.isArray(icdData && icdData.diagnoses) ? icdData.diagnoses.map(item => item && item.name) : [])]
       .map(auditText).filter(Boolean);
   }
@@ -3213,11 +3221,10 @@
     if (event.data.type === "ICD_DATA" && event.data.__hisTimeHelperIcdV1 === true) {
       const incomingHoSoId = auditNormalizeHoSoId(event.data.hoSoBenhAnId || (event.data.icdData && event.data.icdData.hoSoBenhAnId));
       const currentHoSoId = auditCurrentHoSoId() || auditNormalizeHoSoId(auditState.context && auditState.context.hoSoBenhAnId);
-      if (!incomingHoSoId || !currentHoSoId || incomingHoSoId !== currentHoSoId) return;
+      if (!incomingHoSoId) return;
       const incomingIcd = event.data.icdData && typeof event.data.icdData === "object" ? event.data.icdData : null;
       if (!incomingIcd || !Array.isArray(incomingIcd.diagnoses)) return;
-      auditState.icdHoSoBenhAnId = incomingHoSoId;
-      auditState.icdData = {
+      const icdData = {
         source: String(incomingIcd.source || "NT.005.HSBA"),
         mainCode: String(incomingIcd.mainCode || "").trim().toUpperCase(),
         mainName: String(incomingIcd.mainName || "").trim(),
@@ -3228,8 +3235,18 @@
         })).filter(item => item.code),
         hasMainField: !!incomingIcd.hasMainField,
         hasSecondaryField: !!incomingIcd.hasSecondaryField,
-        capturedAt: Number(incomingIcd.capturedAt || Date.now())
+        capturedAt: Number(incomingIcd.capturedAt || Date.now()),
+        // Whole BENHCHINH / BENHPHU text, so a diagnosis is still found when
+        // its name could not be split from its code.
+        rawText: String(incomingIcd.rawText || "")
       };
+      icdCacheByHoSoId.delete(incomingHoSoId);
+      icdCacheByHoSoId.set(incomingHoSoId, icdData);
+      if (icdCacheByHoSoId.size > 200) icdCacheByHoSoId.delete(icdCacheByHoSoId.keys().next().value);
+      // A payload for another case stays in the cache until that case is shown.
+      if (currentHoSoId && incomingHoSoId !== currentHoSoId) return;
+      auditState.icdHoSoBenhAnId = incomingHoSoId;
+      auditState.icdData = icdData;
       if (dvktUI.panel.style.display !== "none") renderDVKTPanel();
       return;
     }
@@ -3998,6 +4015,17 @@
     }
     return "";
   }
+  // Time ("15:00:00") that follows the first dd/mm/yyyy found in texts, so an
+  // error line can show "10/09/2026 15:00:00". "" when that text has no time.
+  function scanFirstTime(...texts) {
+    for (const text of texts) {
+      const s = String(text || "");
+      if (!/\b\d{1,2}\/\d{1,2}\/\d{4}\b/.test(s)) continue;
+      const m = s.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\D{0,3}?(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      return m ? `${m[1].padStart(2, "0")}:${m[2]}:${m[3] || "00"}` : "";
+    }
+    return "";
+  }
   // ---- XÉT NGHIỆM LẶP LẠI TRONG 3 THÁNG TRƯỚC + THÁNG HIỆN TẠI (Bộ mỡ, HbA1C) ----
   // Cửa sổ tính đúng ngày: xét nghiệm ngày 05/11/2026 thì tìm lại từ ngày
   // 05/08/2026 (lùi 3 tháng, cùng ngày; ngày không có trong tháng thì lấy ngày cuối tháng).
@@ -4054,9 +4082,9 @@
     const now = new Date();
     return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_MONTHS);
   }
-  // Patients (admission day) and XN rows dated before (today - 4 months,
+  // Patients (admission day) and XN rows dated before (today - 3 months,
   // same day) are skipped: not scanned, not listed, not reported.
-  const SCAN_SKIP_OLDER_MONTHS = 4;
+  const SCAN_SKIP_OLDER_MONTHS = 3;
   function scanSkipCutoff() {
     const now = new Date();
     return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_SKIP_OLDER_MONTHS);
@@ -4176,8 +4204,11 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
   // [PTTT]: the service-time rules of the timing panel (ghi điện cơ >= 30 phút,
   // thận nhân tạo >= 4 tiếng, hút đờm trong giờ thở máy, số lượng thở máy).
   // A row without start/end time is only reported by a rule that needs it.
+  // Returns { errors, rows }: rows = every PTTT row (clean or not) for the
+  // "PTTT" table of the scan results.
   function scanPtttFindings() {
     const errors = [];
+    const rows = [];
     const ventilationRows = hthGetVentilationIntervals();
     for (const row of currentRows) {
       const seconds = elapsedSeconds(row.start, row.end);
@@ -4203,15 +4234,17 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
           if (Math.abs(converted - quantity) >= 0.01) rowErrors.push(`Thở máy: số lượng quy đổi ${converted} khác số lượng trên HIS ${quantity}.`);
         }
       }
-      if (!rowErrors.length) continue;
       const source = [row.start, row.end].find(value => auditDateTime(value)) || "";
       const date = auditDateOnly(source);
+      rows.push({ day: date || "", start: auditText(row.start), end: auditText(row.end), code: auditText(row.serviceCode),
+        name: auditText(row.serviceName), quantity: auditText(row.quantity), bad: rowErrors.length > 0, note: rowErrors.join(" ") });
+      if (!rowErrors.length) continue;
       const time = date ? (auditDateTimeText(source).split(" ")[1] || "") : "";
       const item = `${row.serviceCode || ""} ${row.serviceName || ""}`.trim();
       const detail = `Bắt đầu: ${row.start || "chưa có"} · Kết thúc: ${row.end || "chưa có"}`;
       for (const message of rowErrors) errors.push({ module: "PTTT", date, time, item, message, detail });
     }
-    return errors;
+    return { errors, rows };
   }
 
   // scanned: { xn, thuoc, pttt } = the "Kiểm tra" buttons when the scan started.
@@ -4221,15 +4254,15 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     const errors = [];
     renderDVKTPanel();
     if (scanned.xn) for (const cells of scanRowsWithClass(dvktUI.body, "tr.hth-audit-dvkt-row-bad")) {
-      errors.push({ module: "DVKT", date: scanFirstDay(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
+      errors.push({ module: "DVKT", date: scanFirstDay(cells[3], cells[4], cells[5]), time: scanFirstTime(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
     }
     renderDrugPanel();
     if (scanned.thuoc) for (const cells of scanRowsWithClass(drugUI.body, "tr.hth-audit-drug-row-bad")) {
-      errors.push({ module: "Thuốc", date: scanFirstDay(cells[3]), item: `${cells[0] || ""}${cells[3] ? ` (${cells[3]})` : ""}`, message: cells[cells.length - 1] || "" });
+      errors.push({ module: "Thuốc", date: scanFirstDay(cells[3]), time: scanFirstTime(cells[3]), item: `${cells[0] || ""}${cells[3] ? ` (${cells[3]})` : ""}`, message: cells[cells.length - 1] || "" });
     }
     renderContrastPanel();
     if (scanned.xn) for (const cells of scanRowsWithClass(contrastUI.body, "tr.hth-audit-dvkt-row-bad, tr.hth-audit-drug-row-bad")) {
-      errors.push({ module: "CT", date: scanFirstDay(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
+      errors.push({ module: "CT", date: scanFirstDay(cells[3], cells[4], cells[5]), time: scanFirstTime(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
     }
     // [Thiếu chẩn đoán]: a prescribed Vilanta/Esomeprazol without a matching diagnosis.
     const drugTargets = scanned.thuoc ? auditDrugDiagnosisTargets() : [];
@@ -4253,12 +4286,15 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
           const detail = caseIcd
             ? `Y lệnh ${orderText}; vào viện ${admissionTime || admissionDay || "chưa rõ"}: thiếu chẩn đoán phù hợp.`
             : `Y lệnh ${orderText}: chưa đọc được chẩn đoán (NT.005.HSBA) nên không kiểm tra được.`;
-          const time = scanFirstDay(row.orderDate) ? (auditDateTimeText(row.orderDate).split(" ")[1] || "") : "";
+          // No order date: the error falls on the admission day, so show its time.
+          const time = scanFirstDay(row.orderDate) ? (auditDateTimeText(row.orderDate).split(" ")[1] || "")
+            : (auditDateTimeText(admissionTime).split(" ")[1] || "");
           errors.push({ module: "Thiếu chẩn đoán", date: day, time, item: "", message: `Thuốc ${name}`, detail });
         }
       }
     }
-    if (scanned.pttt) errors.push(...scanPtttFindings());
+    const pttt = scanned.pttt ? scanPtttFindings() : { errors: [], rows: [] };
+    errors.push(...pttt.errors);
     const fallbackDay = (info && info.visitDate) || auditDateOnly(auditState.context && auditState.context.admissionDate || "");
     // Every XN/DVKT row (clean or not), for the "Dòng XN" table. renderDVKTPanel
     // ran above and left them in dvktLastDisplayRows.
@@ -4267,11 +4303,14 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       .filter(row => !scanIsTooOld(row.day, cutoff))
       .map(row => ({ day: row.day || "", dateTime: row.dateTime || "", code: auditText(row.code), name: auditText(row.name),
         quantity: auditText(row.quantity), status: row.status || "", bad: !!row.hasWarning })) : [];
+    // Every PTTT row (clean or not), for the "PTTT" table.
+    const ptttRows = pttt.rows.filter(row => !scanIsTooOld(row.day, cutoff));
     // Rows dated more than SCAN_SKIP_OLDER_MONTHS ago are skipped, their errors too.
     const xnModules = new Set(["DVKT", "CT", "PTTT"]);
     return {
       errors: errors.filter(err => !(xnModules.has(err.module) && scanIsTooOld(err.date, cutoff))),
       xnRows,
+      ptttRows,
       repeatTests: scanned.xn ? scanCollectRepeatTests(fallbackDay) : [],
       counts: { dvkt: auditState.dvktRows.size, drug: auditState.medicineRows.size, services: currentRows.length }
     };
@@ -4336,6 +4375,30 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
           if (onlyErrors && !r.bad) continue;
           const tr = document.createElement("tr");
           tr.appendChild(auditElement("td", "", r.dateTime || r.day || "--/--/----"));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.code));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.name));
+          tr.appendChild(auditElement("td", "", r.quantity));
+          table.appendChild(tr);
+        }
+        details.appendChild(table); box.appendChild(details);
+      }
+      // Every scanned PTTT row, with or without error (hover a red row for why).
+      const ptttRows = Array.isArray(result.ptttRows) ? result.ptttRows : [];
+      if (ptttRows.length && (!onlyErrors || ptttRows.some(r => r.bad))) {
+        const badCount = ptttRows.filter(r => r.bad).length;
+        const details = document.createElement("details");
+        if (badCount) details.open = true;
+        details.appendChild(auditElement("summary", "", `PTTT (${ptttRows.length})${badCount ? ` · ${badCount} dòng lỗi` : " · không lỗi"}`));
+        const table = document.createElement("table");
+        const thead = document.createElement("tr");
+        for (const h of ["Bắt đầu", "Kết thúc", "Mã", "Tên", "SL"]) thead.appendChild(auditElement("th", "", h));
+        table.appendChild(thead);
+        for (const r of ptttRows) {
+          if (onlyErrors && !r.bad) continue;
+          const tr = document.createElement("tr");
+          if (r.note) tr.title = r.note;
+          tr.appendChild(auditElement("td", "", r.start || "--"));
+          tr.appendChild(auditElement("td", "", r.end || "--"));
           tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.code));
           tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.name));
           tr.appendChild(auditElement("td", "", r.quantity));
