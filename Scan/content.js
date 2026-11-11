@@ -4,19 +4,15 @@
   if (window.__hisTimeHelperPanelLoadedV326) return;
   // Correct guard: prevent duplicate listeners/panels if the script is injected again.
   window.__hisTimeHelperPanelLoadedV326 = true;
-  const prior = document.getElementById("his-time-helper");
+  const prior = document.getElementById("scanx-time-helper");
   if (prior) prior.remove();
-  const priorStyle = document.getElementById("his-time-helper-style-v31");
+  const priorStyle = document.getElementById("scanx-time-helper-style-v31");
   if (priorStyle) priorStyle.remove();
-  const priorContrastButton = document.getElementById("hth-contrast-trigger");
-  if (priorContrastButton) priorContrastButton.remove();
-  const priorContrastPanel = document.getElementById("hth-contrast-panel");
-  if (priorContrastPanel) priorContrastPanel.remove();
-  const priorContrastStyle = document.getElementById("hth-contrast-style");
-  if (priorContrastStyle) priorContrastStyle.remove();
-  for (const id of ["hth-dvkt-trigger", "hth-drug-trigger", "hth-dvkt-panel", "hth-drug-panel", "hth-audit-style-v38"]) {
-    const old = document.getElementById(id); if (old) old.remove();
-  }
+  // IDs use the "scanx-" prefix so this extension can run next to the main
+  // "Kiểm tra hồ sơ bệnh án điện tử" extension (which uses his-*/hth-* IDs)
+  // without either one restyling or removing the other's buttons and panels.
+  const priorAuditStyle = document.getElementById("scanx-audit-style-v38");
+  if (priorAuditStyle) priorAuditStyle.remove();
 
   let currentRows = [];
   let currentGroup = "";
@@ -33,49 +29,49 @@
   let minimized = true;
 
   const style = document.createElement("style");
-  style.id = "his-time-helper-style-v31";
+  style.id = "scanx-time-helper-style-v31";
   style.textContent = `
-    #his-time-helper{position:fixed;right:12px;top:70px;width:355px;max-height:65vh;z-index:2147483647;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:13px/1.4 Arial,sans-serif;overflow:hidden}
-    #his-time-helper.hth-minimized{width:42px;min-width:42px;max-height:none;height:42px;border-radius:10px}
-    #his-time-helper.hth-minimized .hth-head{height:42px;padding:0;justify-content:center;border-radius:10px}
-    #his-time-helper.hth-minimized .hth-head>span{display:none}
-    #his-time-helper.hth-minimized .hth-head button{width:42px;height:42px;padding:0;border:0;border-radius:10px;background:#eaf2ff;font-size:20px;line-height:40px}
+    #scanx-time-helper{position:fixed;right:12px;top:70px;width:355px;max-height:65vh;z-index:2147483647;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:13px/1.4 Arial,sans-serif;overflow:hidden}
+    #scanx-time-helper.hth-minimized{width:42px;min-width:42px;max-height:none;height:42px;border-radius:10px}
+    #scanx-time-helper.hth-minimized .hth-head{height:42px;padding:0;justify-content:center;border-radius:10px}
+    #scanx-time-helper.hth-minimized .hth-head>span{display:none}
+    #scanx-time-helper.hth-minimized .hth-head button{width:42px;height:42px;padding:0;border:0;border-radius:10px;background:#eaf2ff;font-size:20px;line-height:40px}
 
-    #his-time-helper *{box-sizing:border-box}
-    #his-time-helper .hth-head{display:flex;align-items:center;justify-content:space-between;background:#eaf2ff;padding:9px 10px;font-weight:700}
-    #his-time-helper button{border:1px solid #b8c2d1;background:#fff;border-radius:5px;padding:4px 7px;cursor:pointer;font-size:12px}
-    #his-time-helper .hth-body{padding:9px;overflow:auto;max-height:calc(65vh - 42px)}
-    #his-time-helper .hth-note{color:#5f6368;font-size:11px;margin:0 0 8px}
-    #his-time-helper .hth-card{border:1px solid #e0e3e7;border-radius:7px;padding:9px;margin:7px 0}
-    #his-time-helper .hth-card.hth-selected{border:3px solid #16a34a !important;background:#e9f9ed !important;box-shadow:0 0 0 3px rgba(22,163,74,.20)}
-    #his-time-helper .hth-card.hth-short-duration{border:2px solid #c00000 !important;background:#fff5f5 !important}
-    #his-time-helper .hth-card.hth-missing-time{border:2px solid #c00000 !important;background:#fff5f5 !important}
-    #his-time-helper .hth-card{cursor:pointer;transition:box-shadow .12s ease,border-color .12s ease}
-    #his-time-helper .hth-card:hover{border-color:#4285f4;box-shadow:0 0 0 2px rgba(66,133,244,.16)}
-    #his-time-helper .hth-name{font-weight:700;margin-bottom:6px;overflow-wrap:anywhere;font-size:14px}
-    tr.hth-jump-target > td, tr.hth-jump-target > th, [role="row"].hth-jump-target > [role="gridcell"], [role="row"].hth-jump-target > [role="columnheader"]{background:#fff1a8 !important;outline:1px solid #f29900 !important;outline-offset:-1px}
-    tr.hth-jump-target, [role="row"].hth-jump-target{outline:3px solid #f29900 !important;outline-offset:-2px !important;box-shadow:0 0 0 3px rgba(242,153,0,.25) !important}
-    #hth-jump-toast{position:fixed;right:14px;bottom:14px;max-width:380px;padding:10px 14px;border-radius:7px;background:#1f2937;color:#fff;font:700 13px/1.45 Arial,sans-serif;z-index:2147483647;box-shadow:0 4px 16px rgba(0,0,0,.24);display:none;overflow-wrap:anywhere}
-    #hth-jump-toast.hth-toast-bad{background:#b91c1c}
-    #his-time-helper .hth-grid{display:grid;grid-template-columns:1fr;gap:4px}
-    #his-time-helper .hth-actual{color:#087f23;font-weight:800;font-size:16px;background:#eaf7ed;border-radius:5px;padding:5px}
-    #his-time-helper .hth-qty{color:#7b1fa2;font-weight:700}
-    #his-time-helper .hth-good{color:#137333;font-weight:700}
-    #his-time-helper .hth-warn{color:#b06000;font-weight:700}
-    #his-time-helper .hth-bad{color:#c00000;font-weight:800;background:#fff0f0;border-radius:4px;padding:3px}
-    #his-time-helper .hth-empty{padding:14px 5px;text-align:center;color:#5f6368}
-    #his-time-helper .hth-bed-ticket-section{background:#f8fbff;border-color:#9bbce7}
-    #his-time-helper .hth-bed-ticket-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10px;line-height:1.3}
-    #his-time-helper .hth-bed-ticket-table th{background:#eaf2ff;color:#174ea6;text-align:left;padding:4px 3px;border:1px solid #c8d8ec}
-    #his-time-helper .hth-bed-ticket-table td{padding:4px 3px;border:1px solid #d8dee8;overflow-wrap:anywhere;vertical-align:top}
-    #his-time-helper .hth-bed-ticket-table tr{cursor:pointer}
-    #his-time-helper .hth-bed-ticket-table tr:hover td{background:#fff2b3}
-    #his-time-helper .hth-bed-ticket-table td.hth-bad{color:#b91c1c;font-weight:700;background:#fff0f0}
+    #scanx-time-helper *{box-sizing:border-box}
+    #scanx-time-helper .hth-head{display:flex;align-items:center;justify-content:space-between;background:#eaf2ff;padding:9px 10px;font-weight:700}
+    #scanx-time-helper button{border:1px solid #b8c2d1;background:#fff;border-radius:5px;padding:4px 7px;cursor:pointer;font-size:12px}
+    #scanx-time-helper .hth-body{padding:9px;overflow:auto;max-height:calc(65vh - 42px)}
+    #scanx-time-helper .hth-note{color:#5f6368;font-size:11px;margin:0 0 8px}
+    #scanx-time-helper .hth-card{border:1px solid #e0e3e7;border-radius:7px;padding:9px;margin:7px 0}
+    #scanx-time-helper .hth-card.hth-selected{border:3px solid #16a34a !important;background:#e9f9ed !important;box-shadow:0 0 0 3px rgba(22,163,74,.20)}
+    #scanx-time-helper .hth-card.hth-short-duration{border:2px solid #c00000 !important;background:#fff5f5 !important}
+    #scanx-time-helper .hth-card.hth-missing-time{border:2px solid #c00000 !important;background:#fff5f5 !important}
+    #scanx-time-helper .hth-card{cursor:pointer;transition:box-shadow .12s ease,border-color .12s ease}
+    #scanx-time-helper .hth-card:hover{border-color:#4285f4;box-shadow:0 0 0 2px rgba(66,133,244,.16)}
+    #scanx-time-helper .hth-name{font-weight:700;margin-bottom:6px;overflow-wrap:anywhere;font-size:14px}
+    tr.scanx-jump-target > td, tr.scanx-jump-target > th, [role="row"].scanx-jump-target > [role="gridcell"], [role="row"].scanx-jump-target > [role="columnheader"]{background:#fff1a8 !important;outline:1px solid #f29900 !important;outline-offset:-1px}
+    tr.scanx-jump-target, [role="row"].scanx-jump-target{outline:3px solid #f29900 !important;outline-offset:-2px !important;box-shadow:0 0 0 3px rgba(242,153,0,.25) !important}
+    #scanx-jump-toast{position:fixed;right:14px;bottom:14px;max-width:380px;padding:10px 14px;border-radius:7px;background:#1f2937;color:#fff;font:700 13px/1.45 Arial,sans-serif;z-index:2147483647;box-shadow:0 4px 16px rgba(0,0,0,.24);display:none;overflow-wrap:anywhere}
+    #scanx-jump-toast.hth-toast-bad{background:#b91c1c}
+    #scanx-time-helper .hth-grid{display:grid;grid-template-columns:1fr;gap:4px}
+    #scanx-time-helper .hth-actual{color:#087f23;font-weight:800;font-size:16px;background:#eaf7ed;border-radius:5px;padding:5px}
+    #scanx-time-helper .hth-qty{color:#7b1fa2;font-weight:700}
+    #scanx-time-helper .hth-good{color:#137333;font-weight:700}
+    #scanx-time-helper .hth-warn{color:#b06000;font-weight:700}
+    #scanx-time-helper .hth-bad{color:#c00000;font-weight:800;background:#fff0f0;border-radius:4px;padding:3px}
+    #scanx-time-helper .hth-empty{padding:14px 5px;text-align:center;color:#5f6368}
+    #scanx-time-helper .hth-bed-ticket-section{background:#f8fbff;border-color:#9bbce7}
+    #scanx-time-helper .hth-bed-ticket-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10px;line-height:1.3}
+    #scanx-time-helper .hth-bed-ticket-table th{background:#eaf2ff;color:#174ea6;text-align:left;padding:4px 3px;border:1px solid #c8d8ec}
+    #scanx-time-helper .hth-bed-ticket-table td{padding:4px 3px;border:1px solid #d8dee8;overflow-wrap:anywhere;vertical-align:top}
+    #scanx-time-helper .hth-bed-ticket-table tr{cursor:pointer}
+    #scanx-time-helper .hth-bed-ticket-table tr:hover td{background:#fff2b3}
+    #scanx-time-helper .hth-bed-ticket-table td.hth-bad{color:#b91c1c;font-weight:700;background:#fff0f0}
   `;
   (document.head || document.documentElement).appendChild(style);
 
   const panel = document.createElement("section");
-  panel.id = "his-time-helper";
+  panel.id = "scanx-time-helper";
   panel.innerHTML = `<div class="hth-head"><span>Theo dõi thời gian dịch vụ</span><button type="button" data-act="min" title="Mở bảng theo dõi">⏱</button></div>
     <div class="hth-body"><p class="hth-note">Thời gian thực tế màu xanh. Chỉ PT0034/thông khí nhân tạo được quy đổi giờ và đối chiếu số lượng HIS. Hút đờm nằm ngoài khoảng thở máy sẽ được cảnh báo đỏ để rà soát.</p>
     <div class="hth-current"><div class="hth-empty">Chưa nhận được dữ liệu. Hãy bấm vào phiếu/dịch vụ.</div></div></div>`;
@@ -86,7 +82,7 @@
   body.style.display = "none";
 
   const jumpToast = document.createElement("div");
-  jumpToast.id = "hth-jump-toast";
+  jumpToast.id = "scanx-jump-toast";
   jumpToast.setAttribute("role", "status");
   jumpToast.setAttribute("aria-live", "polite");
   (document.body || document.documentElement).appendChild(jumpToast);
@@ -101,7 +97,7 @@
 
   // Audit modules (DVKT / Thuốc / CT checks used by QUÉT).
   const auditStyle = document.createElement("style");
-  auditStyle.id = "hth-audit-style-v38";
+  auditStyle.id = "scanx-audit-style-v38";
   auditStyle.textContent = `
     .hth-audit-muted{color:#68737d;font-size:10px}
   `;
@@ -132,6 +128,9 @@
     contextKey: "", context: {},
     dvktRows: new Map(), medicineRows: new Map(),
     contrastServices: new Map(), contrastMedicines: new Map(),
+    // Kết quả xét nghiệm lines (NT.024.2) by KETQUACLSID, each with its visit key;
+    // labErrors: why a phiếu's results could not be loaded during QUÉT.
+    labResults: new Map(), labErrors: [],
     icdHoSoBenhAnId: "", icdData: null
   };
   // Every NT.005.HSBA diagnosis payload seen, by HOSOBENHANID. The response can
@@ -350,7 +349,7 @@
     for (const header of globalHeaders) addRows(rowsForResultHeader(header));
     // Plain HTML table fallback where the header and data rows share one table.
     for (const table of Array.from(document.querySelectorAll("table,[role='grid']"))) {
-      if (!visibleNode(table) || (table.closest("#his-time-helper"))) continue;
+      if (!visibleNode(table) || (table.closest("#scanx-time-helper"))) continue;
       const headerRow = Array.from(table.querySelectorAll("tr,[role='row']")).find(tr =>
         Array.from(tr.children || []).some(cell => isResultTimeField("", cell.innerText || cell.textContent || cell.getAttribute("title") || "")));
       if (!headerRow) continue;
@@ -634,6 +633,7 @@
     auditState.contextKey = ""; auditState.context = {};
     auditState.dvktRows.clear(); auditState.medicineRows.clear();
     auditState.contrastServices.clear(); auditState.contrastMedicines.clear();
+    auditState.labResults.clear(); auditState.labErrors = [];
     auditState.icdHoSoBenhAnId = ""; auditState.icdData = null;
   }
   function auditRequiredCompanionDvkt(rows) {
@@ -2153,7 +2153,7 @@
   }
 
   function isVisibleElement(el) {
-    if (!el || el.closest("#his-time-helper, #hth-scan-panel, #hth-scan-trigger")) return false;
+    if (!el || el.closest("#scanx-time-helper, #scanx-scan-panel, #scanx-scan-trigger")) return false;
     const style = getComputedStyle(el);
     return style.display !== "none" && style.visibility !== "hidden" &&
       el.getClientRects().length > 0;
@@ -2284,7 +2284,7 @@
 
   function insideHelperUI(node) {
     const el = node && (node.nodeType === 1 ? node : node.parentElement);
-    return !!(el && el.closest && el.closest("#his-time-helper, #hth-scan-panel, #hth-scan-trigger, #hth-jump-toast"));
+    return !!(el && el.closest && el.closest("#scanx-time-helper, #scanx-scan-panel, #scanx-scan-trigger, #scanx-jump-toast, #his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger, #hth-scan-panel, #hth-scan-trigger, #hth-jump-toast"));
   }
   function hthClickedCaseHint(target) {
     const row = target && target.closest ? target.closest("tr,[role='row']") : null;
@@ -2421,14 +2421,24 @@
       auditState.icdData = icdData;
       return;
     }
+    if (event.data.type === "LAB_RESULTS") {
+      const key = String(event.data.context && event.data.context.key || "").trim();
+      if (!key || (auditState.contextKey && auditState.contextKey !== key)) return;
+      const rows = Array.isArray(event.data.rows) ? event.data.rows : [];
+      for (const row of rows) if (row && row.key) auditState.labResults.set(String(row.key), { ...row, contextKey: key });
+      while (auditState.labResults.size > 2000) auditState.labResults.delete(auditState.labResults.keys().next().value);
+      return;
+    }
     if (event.data.type === "AUDIT_DATA") {
-      const context = event.data.context && typeof event.data.context === "object" ? event.data.context : {};
+      const context =event.data.context && typeof event.data.context === "object" ? event.data.context : {};
       const incomingKey = String(context.key || "").trim();
       if (!incomingKey) return; // Do not combine rows across cases without a stable HIS encounter key.
       if (auditState.contextKey && auditState.contextKey !== incomingKey) {
         auditState.dvktRows.clear(); auditState.medicineRows.clear();
         auditState.contrastServices.clear(); auditState.contrastMedicines.clear();
-        const nextHoSoId = auditNormalizeHoSoId(context.hoSoBenhAnId);
+        for (const [k, row] of auditState.labResults) if (row.contextKey !== incomingKey) auditState.labResults.delete(k);
+        auditState.labErrors = [];
+        const nextHoSoId =auditNormalizeHoSoId(context.hoSoBenhAnId);
         if (auditState.icdHoSoBenhAnId && nextHoSoId && auditState.icdHoSoBenhAnId !== nextHoSoId) {
           auditState.icdHoSoBenhAnId = ""; auditState.icdData = null;
         }
@@ -2622,7 +2632,7 @@
     let tied = false;
 
     for (const row of rows) {
-      if (row.closest("#his-time-helper, #hth-scan-panel, #hth-scan-trigger")) continue;
+      if (row.closest("#scanx-time-helper, #scanx-scan-panel, #scanx-scan-trigger")) continue;
       const rowText = String(row.innerText || row.textContent || "").replace(/\s+/g, " ").trim();
       if (!rowText) continue;
       const dates = dateTimesInText(rowText);
@@ -2646,15 +2656,15 @@
     }
     area.querySelectorAll(".hth-card.hth-selected").forEach(el => el.classList.remove("hth-selected"));
     card.classList.add("hth-selected");
-    document.querySelectorAll(".hth-jump-target").forEach(el => el.classList.remove("hth-jump-target"));
-    best.classList.add("hth-jump-target");
+    document.querySelectorAll(".scanx-jump-target").forEach(el => el.classList.remove("scanx-jump-target"));
+    best.classList.add("scanx-jump-target");
     try { best.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" }); }
     catch (_) { best.scrollIntoView(); }
     const rowLabel = card.dataset.serviceName || card.dataset.code || "dịch vụ";
     const matchQuality = bestScore >= 100 ? "Đã tìm thấy" : "Đã tìm được dòng phù hợp theo mã/tên";
     showJumpToast(matchQuality + ": " + rowLabel + (tied ? " (có nhiều dòng gần giống, em kiểm tra ngày giờ trên dòng tô vàng nhé)." : "."), false);
     if (best.__hthJumpHighlightTimer) clearTimeout(best.__hthJumpHighlightTimer);
-    best.__hthJumpHighlightTimer = setTimeout(() => best.classList.remove("hth-jump-target"), 5200);
+    best.__hthJumpHighlightTimer = setTimeout(() => best.classList.remove("scanx-jump-target"), 5200);
   }
 
   // Clicking a timing card locates the matching source row in HIS. This only scrolls/highlights;
@@ -2681,10 +2691,10 @@
       if (record && record.row && document.contains(record.row)) {
         try { record.row.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" }); }
         catch (_) { record.row.scrollIntoView(); }
-        document.querySelectorAll(".hth-jump-target").forEach(el => el.classList.remove("hth-jump-target"));
-        record.row.classList.add("hth-jump-target");
+        document.querySelectorAll(".scanx-jump-target").forEach(el => el.classList.remove("scanx-jump-target"));
+        record.row.classList.add("scanx-jump-target");
         if (record.row.__hthJumpHighlightTimer) clearTimeout(record.row.__hthJumpHighlightTimer);
-        record.row.__hthJumpHighlightTimer = setTimeout(() => record.row.classList.remove("hth-jump-target"), 5200);
+        record.row.__hthJumpHighlightTimer = setTimeout(() => record.row.classList.remove("scanx-jump-target"), 5200);
       }
       return;
     }
@@ -2713,75 +2723,77 @@
   // Các quy tắc kiểm tra được dùng lại nguyên vẹn từ các bảng hiện có.
   // ---------------------------------------------------------------------------
   const scanStyle = document.createElement("style");
-  scanStyle.id = "hth-scan-style";
+  scanStyle.id = "scanx-scan-style";
   scanStyle.textContent = `
-    #hth-scan-trigger{position:fixed;right:12px;top:70px;width:42px;height:42px;z-index:2147483645;border:1px solid #f0b46b;border-radius:10px;background:#fff4e5;color:#9a4d00;box-shadow:0 3px 14px rgba(0,0,0,.18);font:700 10px Arial,sans-serif;cursor:pointer;padding:0}
-    #hth-scan-panel{position:fixed;right:62px;top:70px;width:560px;max-width:calc(100vw - 80px);max-height:72vh;z-index:2147483646;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:11px/1.4 Arial,sans-serif;overflow:hidden;display:none}
-    #hth-scan-panel *{box-sizing:border-box}
-    #hth-scan-panel .sc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;background:#fff4e5;color:#9a4d00;font-weight:700}
-    #hth-scan-panel .sc-head-actions{display:flex;gap:6px;align-items:center}
-    #hth-scan-panel button{border:1px solid #b8c2d1;background:#fff;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:11px}
-    #hth-scan-panel button.sc-primary{background:#9a4d00;border-color:#9a4d00;color:#fff;font-weight:700}
-    #hth-scan-panel button:disabled{opacity:.55;cursor:default}
-    #hth-scan-panel .sc-body{padding:8px;overflow:auto;max-height:calc(72vh - 40px)}
-    #hth-scan-panel .sc-status{padding:7px 8px;border-radius:6px;background:#f5f7fa;color:#3c4650;margin-bottom:8px;overflow-wrap:anywhere}
-    #hth-scan-panel .sc-opts{display:grid;gap:5px;margin:0 0 8px;padding:7px 8px;border:1px solid #eef0f3;border-radius:7px;background:#fcfcfd}
-    #hth-scan-panel .sc-opt-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
-    #hth-scan-panel .sc-opt-label{width:96px;color:#6b7280;font-weight:700}
-    #hth-scan-panel .sc-opts input.sc-bhyt{width:200px;height:26px;box-sizing:border-box;background:#fff;color:#1f2937;border:1px solid #b8c2d1;border-radius:5px;padding:4px 6px;font-size:11px}
-    #hth-scan-panel .sc-lookup{border:1px solid #c9d7ea;background:#f3f8ff;border-radius:6px;padding:6px 8px;margin-bottom:6px;line-height:1.45}
-    #hth-scan-panel .sc-lookup ul{margin:3px 0 0 16px;padding:0}
-    #hth-scan-panel .sc-lookup summary{cursor:pointer;color:#1f4f8a}
-    #hth-scan-panel .sc-opts label{position:relative;cursor:pointer;user-select:none}
-    #hth-scan-panel .sc-opts input[type=checkbox],#hth-scan-panel .sc-opts input[type=radio]{position:absolute;opacity:0;width:0;height:0;margin:0}
-    #hth-scan-panel .sc-opts label>span{display:inline-block;padding:2px 9px;border:1px solid #d0d5dd;background:#fff;color:#475467;transition:background .12s,border-color .12s}
-    #hth-scan-panel .sc-chip>span{border-radius:12px}
-    #hth-scan-panel .sc-chip>span::before{content:"+ ";color:#98a2b3}
-    #hth-scan-panel .sc-chip input:checked+span{background:#fff4e5;border-color:#f0b46b;color:#9a4d00;font-weight:700}
-    #hth-scan-panel .sc-chip input:checked+span::before{content:"✓ ";color:#9a4d00}
-    #hth-scan-panel .sc-seg{display:inline-flex}
-    #hth-scan-panel .sc-seg label+label>span{margin-left:-1px}
-    #hth-scan-panel .sc-seg label:first-child>span{border-radius:12px 0 0 12px}
-    #hth-scan-panel .sc-seg label:last-child>span{border-radius:0 12px 12px 0}
-    #hth-scan-panel .sc-seg input:checked+span{background:#9a4d00;border-color:#9a4d00;color:#fff;font-weight:700}
-    #hth-scan-panel .sc-opts label:hover>span{border-color:#f0b46b}
-    #hth-scan-panel .sc-opts input:focus-visible+span{outline:2px solid #1a73e8;outline-offset:1px}
-    #hth-scan-panel .sc-patient{border:1px solid #e1e6eb;border-radius:7px;margin:7px 0;overflow:hidden}
-    #hth-scan-panel .sc-patient.sc-has-error{border:2px solid #d92d20}
-    #hth-scan-panel .sc-phead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;background:#f8fafc}
-    #hth-scan-panel .sc-has-error .sc-phead{background:#fff0ee}
-    #hth-scan-panel .sc-pname{font-weight:700;overflow-wrap:anywhere}
-    #hth-scan-panel .sc-badge{border-radius:10px;padding:1px 8px;font-weight:700;white-space:nowrap}
-    #hth-scan-panel .sc-badge-bad{background:#c62828;color:#fff}
-    #hth-scan-panel .sc-badge-good{background:#eaf7ef;color:#176b3a}
-    #hth-scan-panel .sc-badge-none{background:#eef1f4;color:#5f6368}
-    #hth-scan-panel .sc-errors{margin:0;padding:6px 8px 6px 26px}
-    #hth-scan-panel .sc-errors li{margin:2px 0;color:#842018;overflow-wrap:anywhere}
-    #hth-scan-panel .sc-errors b{color:#5b1610}
-    #hth-scan-panel .sc-errors li.sc-info{color:#8a5a00;background:#fff8d6;border-radius:4px;padding:1px 4px}
-    #hth-scan-panel .sc-errors li.sc-info b{color:#7a4f00}
-    #hth-scan-panel .sc-meta{margin:6px 8px 2px;padding:5px 8px;border-left:3px solid #1a73e8;background:#eef4fd;border-radius:4px;color:#1f2937;font-size:11px}
-    #hth-scan-panel .sc-meta-row{margin:1px 0;overflow-wrap:anywhere}
-    #hth-scan-panel .sc-meta-row b{color:#174ea6}
-    #hth-scan-panel .sc-meta-none{color:#6b7280}
-    #hth-scan-panel details{padding:4px 8px 8px}
-    #hth-scan-panel summary{cursor:pointer;color:#174ea6;font-weight:700}
-    #hth-scan-panel table{border-collapse:collapse;width:100%;font-size:10.5px;margin-top:5px;table-layout:fixed}
-    #hth-scan-panel th{background:#f1f5f9;text-align:left}
-    #hth-scan-panel td,#hth-scan-panel th{padding:3px 4px;border-bottom:1px solid #e7ebef;vertical-align:top;overflow-wrap:anywhere}
-    #hth-scan-panel td.sc-bad{color:#b91c1c;font-weight:700;background:#fff0f0}
+    #scanx-scan-trigger{position:fixed;right:12px;top:70px;width:42px;height:42px;z-index:2147483645;border:1px solid #f0b46b;border-radius:10px;background:#fff4e5;color:#9a4d00;box-shadow:0 3px 14px rgba(0,0,0,.18);font:700 10px Arial,sans-serif;cursor:pointer;padding:0}
+    #scanx-scan-panel{position:fixed;right:62px;top:70px;width:560px;max-width:calc(100vw - 80px);max-height:72vh;z-index:2147483646;background:#fff;color:#202124;border:1px solid #c9ced6;border-radius:10px;box-shadow:0 5px 24px rgba(0,0,0,.22);font:11px/1.4 Arial,sans-serif;overflow:hidden;display:none}
+    #scanx-scan-panel *{box-sizing:border-box}
+    #scanx-scan-panel .sc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;background:#fff4e5;color:#9a4d00;font-weight:700}
+    #scanx-scan-panel .sc-head-actions{display:flex;gap:6px;align-items:center}
+    #scanx-scan-panel button{border:1px solid #b8c2d1;background:#fff;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:11px}
+    #scanx-scan-panel button.sc-primary{background:#9a4d00;border-color:#9a4d00;color:#fff;font-weight:700}
+    #scanx-scan-panel button:disabled{opacity:.55;cursor:default}
+    #scanx-scan-panel .sc-body{padding:8px;overflow:auto;max-height:calc(72vh - 40px)}
+    #scanx-scan-panel .sc-status{padding:7px 8px;border-radius:6px;background:#f5f7fa;color:#3c4650;margin-bottom:8px;overflow-wrap:anywhere}
+    #scanx-scan-panel .sc-opts{display:grid;gap:5px;margin:0 0 8px;padding:7px 8px;border:1px solid #eef0f3;border-radius:7px;background:#fcfcfd}
+    #scanx-scan-panel .sc-opt-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+    #scanx-scan-panel .sc-opt-label{width:96px;color:#6b7280;font-weight:700}
+    #scanx-scan-panel .sc-opts input.sc-bhyt{width:200px;height:26px;box-sizing:border-box;background:#fff;color:#1f2937;border:1px solid #b8c2d1;border-radius:5px;padding:4px 6px;font-size:11px}
+    #scanx-scan-panel .sc-lookup{border:1px solid #c9d7ea;background:#f3f8ff;border-radius:6px;padding:6px 8px;margin-bottom:6px;line-height:1.45}
+    #scanx-scan-panel .sc-lookup ul{margin:3px 0 0 16px;padding:0}
+    #scanx-scan-panel .sc-lookup summary{cursor:pointer;color:#1f4f8a}
+    #scanx-scan-panel .sc-opts label{position:relative;cursor:pointer;user-select:none}
+    #scanx-scan-panel .sc-opts input[type=checkbox],#scanx-scan-panel .sc-opts input[type=radio]{position:absolute;opacity:0;width:0;height:0;margin:0}
+    #scanx-scan-panel .sc-opts label>span{display:inline-block;padding:2px 9px;border:1px solid #d0d5dd;background:#fff;color:#475467;transition:background .12s,border-color .12s}
+    #scanx-scan-panel .sc-chip>span{border-radius:12px}
+    #scanx-scan-panel .sc-chip>span::before{content:"+ ";color:#98a2b3}
+    #scanx-scan-panel .sc-chip input:checked+span{background:#fff4e5;border-color:#f0b46b;color:#9a4d00;font-weight:700}
+    #scanx-scan-panel .sc-chip input:checked+span::before{content:"✓ ";color:#9a4d00}
+    #scanx-scan-panel .sc-seg{display:inline-flex}
+    #scanx-scan-panel .sc-seg label+label>span{margin-left:-1px}
+    #scanx-scan-panel .sc-seg label:first-child>span{border-radius:12px 0 0 12px}
+    #scanx-scan-panel .sc-seg label:last-child>span{border-radius:0 12px 12px 0}
+    #scanx-scan-panel .sc-seg input:checked+span{background:#9a4d00;border-color:#9a4d00;color:#fff;font-weight:700}
+    #scanx-scan-panel .sc-opts label:hover>span{border-color:#f0b46b}
+    #scanx-scan-panel .sc-opts input:focus-visible+span{outline:2px solid #1a73e8;outline-offset:1px}
+    #scanx-scan-panel .sc-patient{border:1px solid #e1e6eb;border-radius:7px;margin:7px 0;overflow:hidden}
+    #scanx-scan-panel .sc-patient.sc-has-error{border:2px solid #d92d20}
+    #scanx-scan-panel .sc-phead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;background:#f8fafc}
+    #scanx-scan-panel .sc-has-error .sc-phead{background:#fff0ee}
+    #scanx-scan-panel .sc-pname{font-weight:700;overflow-wrap:anywhere}
+    #scanx-scan-panel .sc-badge{border-radius:10px;padding:1px 8px;font-weight:700;white-space:nowrap}
+    #scanx-scan-panel .sc-badge-bad{background:#c62828;color:#fff}
+    #scanx-scan-panel .sc-badge-good{background:#eaf7ef;color:#176b3a}
+    #scanx-scan-panel .sc-badge-none{background:#eef1f4;color:#5f6368}
+    #scanx-scan-panel .sc-errors{margin:0;padding:6px 8px 6px 26px}
+    #scanx-scan-panel .sc-errors li{margin:2px 0;color:#842018;overflow-wrap:anywhere}
+    #scanx-scan-panel .sc-errors b{color:#5b1610}
+    #scanx-scan-panel .sc-errors li.sc-info{color:#8a5a00;background:#fff8d6;border-radius:4px;padding:1px 4px}
+    #scanx-scan-panel .sc-errors li.sc-info b{color:#7a4f00}
+    #scanx-scan-panel .sc-errors ul.sc-repeat-lines{margin:2px 0 3px 14px;padding:0;list-style:disc}
+    #scanx-scan-panel .sc-errors ul.sc-repeat-lines li{margin:1px 0;background:none;padding:0}
+    #scanx-scan-panel .sc-meta{margin:6px 8px 2px;padding:5px 8px;border-left:3px solid #1a73e8;background:#eef4fd;border-radius:4px;color:#1f2937;font-size:11px}
+    #scanx-scan-panel .sc-meta-row{margin:1px 0;overflow-wrap:anywhere}
+    #scanx-scan-panel .sc-meta-row b{color:#174ea6}
+    #scanx-scan-panel .sc-meta-none{color:#6b7280}
+    #scanx-scan-panel details{padding:4px 8px 8px}
+    #scanx-scan-panel summary{cursor:pointer;color:#174ea6;font-weight:700}
+    #scanx-scan-panel table{border-collapse:collapse;width:100%;font-size:10.5px;margin-top:5px;table-layout:fixed}
+    #scanx-scan-panel th{background:#f1f5f9;text-align:left}
+    #scanx-scan-panel td,#scanx-scan-panel th{padding:3px 4px;border-bottom:1px solid #e7ebef;vertical-align:top;overflow-wrap:anywhere}
+    #scanx-scan-panel td.sc-bad{color:#b91c1c;font-weight:700;background:#fff0f0}
   `;
   (document.head || document.documentElement).appendChild(scanStyle);
 
   const scanButton = document.createElement("button");
-  scanButton.id = "hth-scan-trigger"; scanButton.type = "button";
+  scanButton.id = "scanx-scan-trigger"; scanButton.type = "button";
   scanButton.title = "Quét bệnh nhân trong danh sách và hiển thị toàn bộ lỗi, thời gian";
   scanButton.textContent = "QUÉT";
   (document.body || document.documentElement).appendChild(scanButton);
 
   const scanLoadEarly = key => { try { return window.localStorage.getItem(key) || ""; } catch (_) { return ""; } };
   const scanPanel = document.createElement("section");
-  scanPanel.id = "hth-scan-panel";
+  scanPanel.id = "scanx-scan-panel";
   scanPanel.innerHTML = `<div class="sc-head"><span>QUÉT BỆNH NHÂN</span><div class="sc-head-actions">
       <button type="button" class="sc-primary" data-scan-act="start">Bắt đầu quét</button>
       <button type="button" data-scan-act="stop" disabled>Dừng</button>
@@ -2789,7 +2801,7 @@
     <div class="sc-body"><div class="sc-status">Chọn phạm vi rồi bấm "Bắt đầu quét". Giữ tab HIS đang mở trong khi quét.</div>
     <div class="sc-opts">
       <div class="sc-opt-row"><span class="sc-opt-label">Quét bệnh nhân</span><span class="sc-seg">
-        <label title="Quét tất cả bệnh nhân đang hiện trong danh sách HIS"><input type="radio" name="hth-scan-scope" value="all" data-scan-scope><span>Tất cả</span></label><label title="Chỉ quét bệnh nhân đang chọn (hoặc đã tích) trong danh sách HIS"><input type="radio" name="hth-scan-scope" value="selected" data-scan-scope><span>1 người</span></label></span></div>
+        <label title="Quét tất cả bệnh nhân đang hiện trong danh sách HIS"><input type="radio" name="scanx-scan-scope" value="all" data-scan-scope><span>Tất cả</span></label><label title="Chỉ quét bệnh nhân đang chọn (hoặc đã tích) trong danh sách HIS"><input type="radio" name="scanx-scan-scope" value="selected" data-scan-scope><span>1 người</span></label></span></div>
       <div class="sc-opt-row"><span class="sc-opt-label">Theo BHYT</span>
         <input type="text" class="sc-bhyt" data-scan-bhyt placeholder="Mã thẻ BHYT (hoặc 10 số cuối)" title="Tìm theo Mã BHYT để lấy họ tên, năm sinh, địa chỉ; tìm lại theo họ tên + năm sinh; chỉ quét các lần vào viện có cùng địa chỉ">
         <button type="button" class="sc-primary" data-scan-act="bhyt">Tìm &amp; quét</button></div>
@@ -2804,6 +2816,60 @@
     </div>
     <div class="sc-results"></div></div>`;
   (document.body || document.documentElement).appendChild(scanPanel);
+  // Other extensions on this page (e.g. "Kiểm tra hồ sơ bệnh án điện tử") put
+  // their own buttons in the same right-hand column (⏱, BHYT, DVKT, THUỐC, CT,
+  // QUÉT...). Their layout differs between versions, so instead of a fixed top
+  // look at what is actually there and take the first free 42px slot.
+  const SCAN_SLOT_TOP = 70, SCAN_SLOT_H = 42, SCAN_SLOT_GAP = 8;
+  function scanRightColumnObstacles() {
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const out = [];
+    // Extension launchers are appended straight to <body>/<html>; checking only
+    // those keeps this cheap on the large HIS page.
+    const candidates = [...(document.body ? document.body.children : []), ...document.documentElement.children];
+    for (const el of candidates) {
+      if (el === scanButton || el === scanPanel) continue;
+      const cs = getComputedStyle(el);
+      if (cs.position !== "fixed" || cs.display === "none" || cs.visibility === "hidden") continue;
+      const r = el.getBoundingClientRect();
+      // Only small launcher buttons hugging the right edge; open panels move
+      // around and are not slots.
+      if (!r.width || !r.height || r.width > 90 || r.height > 90) continue;
+      if (r.right < vw - 40 || r.left > vw) continue;
+      out.push(r);
+    }
+    return out.sort((x, y) => x.top - y.top);
+  }
+  let scanPlacedTop = -1;
+  function scanPlaceTrigger() {
+    let top = SCAN_SLOT_TOP;
+    const obstacles = scanRightColumnObstacles();
+    for (let moved = true; moved;) {
+      moved = false;
+      for (const r of obstacles) {
+        if (r.top < top + SCAN_SLOT_H + SCAN_SLOT_GAP && r.bottom + SCAN_SLOT_GAP > top) {
+          top = Math.ceil(r.bottom + SCAN_SLOT_GAP); moved = true;
+        }
+      }
+    }
+    if (top === scanPlacedTop) return;
+    scanPlacedTop = top;
+    scanButton.style.top = `${top}px`;
+    // Keep the panel's top inside the screen even if the button ends up low.
+    scanPanel.style.top = `${Math.min(top, Math.max(SCAN_SLOT_TOP, Math.round(window.innerHeight * 0.25)))}px`;
+  }
+  scanPlaceTrigger();
+  // Content scripts of different extensions load in no fixed order, and some
+  // add their buttons late: re-check for a while after start-up and on resize.
+  {
+    let placeTimer = 0;
+    const schedulePlace = () => { clearTimeout(placeTimer); placeTimer = setTimeout(scanPlaceTrigger, 150); };
+    const placeObserver = new MutationObserver(schedulePlace);
+    placeObserver.observe(document.body || document.documentElement, { childList: true });
+    for (const ms of [500, 1500, 3000, 6000, 10000]) setTimeout(scanPlaceTrigger, ms);
+    setTimeout(() => placeObserver.disconnect(), 20000);
+    window.addEventListener("resize", schedulePlace);
+  }
   const scanStatus = scanPanel.querySelector(".sc-status");
   const scanResultsEl = scanPanel.querySelector(".sc-results");
   const scanStartBtn = scanPanel.querySelector('[data-scan-act="start"]');
@@ -2893,6 +2959,10 @@
       const kind = ev.kind || "phiếu";
       const isDrug = /thuốc/i.test(kind);
       const tally = () => isDrug ? `Thuốc ${auditState.medicineRows.size} dòng` : `DVKT ${auditState.dvktRows.size} dòng`;
+      if (ev.type === "labError") {
+        if (scanRunning && !auditState.labErrors.includes(String(ev.error || ""))) auditState.labErrors.push(String(ev.error || "không rõ lý do"));
+        return;
+      }
       if (ev.type === "list") {
         scanListEvents++;
         scanLastListEmpty = !!ev.empty;
@@ -2925,7 +2995,27 @@
     scanLastDataAt = Date.now();
   });
 
-  const scanSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // Chrome throttles timers in hidden tabs (1 s, then 1 per minute after 5 min).
+  // Timers inside a dedicated Worker are not throttled, so while the tab is
+  // hidden sleep through a tiny Worker; fall back to setTimeout if it is blocked.
+  function hthMakeBackgroundSleep() {
+    let worker = null, seq = 0;
+    const pending = new Map();
+    const flush = () => { worker = null; for (const done of pending.values()) done(); pending.clear(); };
+    try {
+      const src = "onmessage=e=>setTimeout(()=>postMessage(e.data),e.data.ms)";
+      worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+      worker.onmessage = e => { const done = pending.get(e.data.id); if (done) { pending.delete(e.data.id); done(); } };
+      worker.onerror = flush;
+    } catch (_) { worker = null; }
+    return ms => new Promise(resolve => {
+      if (!worker || document.visibilityState === "visible") { setTimeout(resolve, ms); return; }
+      const id = ++seq;
+      pending.set(id, resolve);
+      try { worker.postMessage({ id, ms }); } catch (_) { pending.delete(id); setTimeout(resolve, ms); }
+    });
+  }
+  const scanSleep = hthMakeBackgroundSleep();
   function scanHisKey() {
     const read = id => {
       const el = document.getElementById(id);
@@ -3056,12 +3146,6 @@
     const res = await scanMainSelect(info.rowId);
     if (await scanWaitKeyChange(previousKey, SCAN_SWITCH_WAIT_MS)) return { switched: true, method: "jqGrid" };
     return { switched: false, error: res.ok ? "HIS không chuyển sang ca này" : res.error };
-  }
-  async function scanWaitVisible() {
-    while (document.visibilityState !== "visible" && !scanStopRequested) {
-      scanStatus.textContent = "Tạm dừng: tab HIS đang bị ẩn. Quay lại tab này để tiếp tục quét.";
-      await scanSleep(500);
-    }
   }
   async function scanWaitForPatient() {
     const t0 = Date.now();
@@ -3201,7 +3285,7 @@
   }
   const SCAN_REPEAT_TEST_RULES = [
     {
-      module: "Bộ mỡ", testText: "xét nghiệm mỡ máu",
+      module: "Bộ mỡ", testText: "xét nghiệm mỡ máu", title: "Xét nghiệm mỡ máu",
       // Mỡ máu (gói/dịch vụ tên "mỡ máu") / Cholesterol toàn phần / HDL-C /
       // Triglycerid (LDL-C không tính).
       match: token => token.includes("MOMAU") ? "Mỡ máu" :
@@ -3210,8 +3294,8 @@
         (token.includes("TRIGLYCERID") ? "Triglycerid" : "")))
     },
     {
-      module: "HbA1C", testText: "xét nghiệm HbA1C",
-      match: token => token.includes("HBA1C") ? "HbA1C" : ""
+      module: "HbA1C", testText: "xét nghiệm HbA1c", title: "Xét nghiệm HbA1c",
+      match: token => token.includes("HBA1C") ? "HbA1c" : ""
     }
   ];
   function scanRepeatTestMatch(name) {
@@ -3293,6 +3377,10 @@
     }
     return [...tests.values()];
   }
+  // Short names of the tests actually done: "Cholesterol toàn phần, Triglycerid".
+  function scanTestLabels(tests) {
+    return [...new Set(tests.map(t => t.label).filter(Boolean))].join(", ");
+  }
   function scanTestListText(tests) {
     return [...new Set(tests.map(t => `${t.code ? t.code + " " : ""}${t.name || t.label}`))].join("; ");
   }
@@ -3304,6 +3392,17 @@
     // yellow as information, not counted as errors.
     const repeatInfos = new Map(scanResults.map(result => [result, []]));
     const reportCutoff = scanReportCutoff();
+    // One date range per visit for every group: the 3 months up to the visit's
+    // latest watched test (Bộ mỡ or HbA1c), e.g. 06/08/2026 – 06/11/2026.
+    const visitRangeEnd = new Map();
+    for (const result of scanResults) {
+      let end = null;
+      for (const test of result.repeatTests || []) {
+        const date = scanParseDay(test.day);
+        if (date && date >= reportCutoff && (!end || date > end)) end = date;
+      }
+      if (end) visitRangeEnd.set(result, end);
+    }
     for (const rule of SCAN_REPEAT_TEST_RULES) {
       const occurrences = [];
       for (const result of scanResults) {
@@ -3319,45 +3418,47 @@
           if (date) occurrences.push({ result, day, date, time, tests });
         }
       }
-      for (const current of occurrences) {
-        // Older tests are kept only as the "earlier" side of a comparison.
-        if (current.date < reportCutoff) continue;
-        const result = current.result;
-        const limit = scanRepeatWindowStart(current.date);
-        const withTime = (day, time) => time ? `${day} ${time}` : day;
-        const windowText = `từ ${withTime(scanFormatDay(limit), current.time)}`;
-        const earlier = occurrences.filter(o => {
-          if (o.date >= current.date || o.date < limit) return false;
-          if (o.result === result) return true;
-          return !!result.patientKey && o.result.patientKey === result.patientKey;
-        }).sort((a, b) => b.date - a.date);
-        if (!earlier.length) {
-          repeatInfos.get(result).push({
-            module: rule.module, date: current.day, time: current.time, dateFromVisit: current.tests.some(t => t.dateFromVisit),
-            item: "", detail: scanTestListText(current.tests),
-            // "1 LẦN XÉT NGHIỆM MỠ MÁU - <ngày giờ>: ..." (see the render loop).
-            headline: `1 LẦN ${rule.testText.toUpperCase()}`,
-            message: `Lần đầu trong ${SCAN_REPEAT_MIN_GAP_DAYS} ngày, chưa có ${rule.testText} nào trước đó (${windowText}).`
-          });
-          continue;
-        }
-        const previous = earlier[0];
-        const gapDays = scanDaysBetween(previous.date, current.date);
-        // Earlier tests in the window, oldest first: "08/09/2026 07:42:10, 01/10/2026 09:00:00".
-        const earlierText = [...earlier].reverse().map(o => withTime(o.day, o.time)).join(", ");
-        const where = previous.result === result ? "cùng đợt điều trị" : (previous.result.caseNo || previous.result.label);
-        const note = current.tests.some(t => t.dateFromVisit) || previous.tests.some(t => t.dateFromVisit)
-          ? " (ngày lấy theo ngày vào viện do HIS không trả ngày y lệnh)" : "";
-        repeatErrors.get(result).push({
-          module: rule.module, date: current.day, time: current.time, dateFromVisit: current.tests.some(t => t.dateFromVisit),
-          item: "",
-          // Shown on hover: which tests, and where/when the earlier one was done.
-          detail: `${scanTestListText(current.tests)}
-Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${scanTestListText(previous.tests)}${note}`,
-          // Times done in the window, this one included: "2 LẦN", "3 LẦN", ...
-          headline: `${earlier.length + 1} LẦN ${rule.testText.toUpperCase()}`,
-          message: `Làm lại sau ${gapDays} ngày (chưa đủ 90 ± 3 ngày), đã ${rule.testText} ngày ${earlierText} (${windowText}).`
-        });
+      // One entry per visit and group, listing every test of the person in the
+      // 3 months up to the visit's latest test, newest first:
+      //   Xét nghiệm mỡ máu: Ghi nhận 3 lần xét nghiệm trong khoảng thời gian từ
+      //   ngày 06/08/2026 đến 06/11/2026.
+      //     06/11/2026 07:46:32: Triglycerid.
+      //     04/11/2026 13:57:00: Cholesterol toàn phần, HDL-C, Triglycerid.
+      // It is an error (red) when one of this visit's tests was done again
+      // within 90 ± 3 days of an earlier one; otherwise information (yellow).
+      const withTime = (day, time) => time ? `${day} ${time}` : day;
+      const samePerson = (o, result) => o.result === result || (!!result.patientKey && o.result.patientKey === result.patientKey);
+      for (const result of scanResults) {
+        const own = occurrences.filter(o => o.result === result && o.date >= reportCutoff);
+        if (!own.length) continue;
+        const repeats = own.map(current => {
+          const limit = scanRepeatWindowStart(current.date);
+          const earlier = occurrences.filter(o => samePerson(o, result) && o.date < current.date && o.date >= limit)
+            .sort((x, y) => y.date - x.date);
+          return earlier.length ? { current, previous: earlier[0] } : null;
+        }).filter(Boolean);
+        const latest = own.reduce((x, y) => (y.date > x.date || (+y.date === +x.date && y.time > x.time)) ? y : x);
+        const end = visitRangeEnd.get(result) || latest.date;
+        const from = scanLookbackStart(end, SCAN_REPEAT_LOOKBACK_MONTHS);
+        const listed = occurrences.filter(o => samePerson(o, result) && o.date >= from && o.date <= end)
+          .sort((x, y) => (y.date - x.date) || String(y.time).localeCompare(String(x.time)));
+        const dateFromVisit = listed.some(o => o.tests.some(t => t.dateFromVisit));
+        const lines = listed.map(o => `${withTime(o.day, o.time)}: ${scanTestLabels(o.tests)}.` +
+          (o.result !== result ? ` (${o.result.caseNo || o.result.label})` : "") +
+          (o.tests.some(t => t.dateFromVisit) ? " (ngày vào viện, HIS không trả ngày y lệnh)" : ""));
+        const detail = repeats.length
+          ? repeats.map(r => `${withTime(r.current.day, r.current.time)} làm lại sau ${scanDaysBetween(r.previous.date, r.current.date)} ngày ` +
+              `(chưa đủ 90 ± 3 ngày) so với ${withTime(r.previous.day, r.previous.time)}` +
+              (r.previous.result !== result ? ` (${r.previous.result.caseNo || r.previous.result.label})` : "")).join("\n")
+          : `Không có lần nào làm lại trong vòng ${SCAN_REPEAT_MIN_GAP_DAYS} ngày.`;
+        const entry = {
+          module: rule.module, date: latest.day, time: latest.time, dateFromVisit,
+          item: "", detail: `${detail}\n${listed.map(o => `${o.day}: ${scanTestListText(o.tests)}`).join("\n")}`,
+          title: `${rule.title}:`,
+          message: `Ghi nhận ${listed.length} lần xét nghiệm trong khoảng thời gian từ ngày ${scanFormatDay(from)} đến ${scanFormatDay(end)}.`,
+          lines
+        };
+        (repeats.length ? repeatErrors : repeatInfos).get(result).push(entry);
       }
     }
     for (const result of scanResults) {
@@ -3413,15 +3514,48 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     return { errors, rows };
   }
 
+  // ---- ALBUMIN MÁU > 25 g/L ----
+  // Every blood albumin result (Kết quả xét nghiệm, NT.024.2) above 25 g/L is
+  // an error: "10/11/2026 10:26:00 [Albumin]: Định lượng Albumin [Máu] = 30.1 g/L (> 25 g/L)".
+  const SCAN_ALBUMIN_MAX = 25;
+  function scanIsBloodAlbumin(row) {
+    if (auditText(row.code).toUpperCase() === "XN045") return true;
+    const token = domToken(row.name);
+    return token.includes("ALBUMIN") && token.includes("MAU") && !token.includes("MICRO");
+  }
+  function scanAlbuminFindings() {
+    const errors = [];
+    const key = auditState.contextKey;
+    for (const row of auditState.labResults.values()) {
+      if (key && row.contextKey && row.contextKey !== key) continue;
+      if (!scanIsBloodAlbumin(row)) continue;
+      const m = auditText(row.value).replace(/,/g, ".").match(/-?\d+(?:\.\d+)?/);
+      const value = m ? Number(m[0]) : NaN;
+      if (!Number.isFinite(value) || value <= SCAN_ALBUMIN_MAX) continue;
+      const when = auditDateTimeText(row.resultTime || row.performedTime || "");
+      const unit = auditText(row.unit) || "g/L";
+      errors.push({
+        module: "Albumin", date: auditDateOnly(when), time: when.split(" ")[1] || "", item: "",
+        message: `${auditText(row.name) || "Albumin"} = ${auditText(row.value)} ${unit} (> ${SCAN_ALBUMIN_MAX} g/L)`,
+        detail: `Trị số bình thường: ${auditText(row.normalRange) || "không rõ"}; thực hiện ${auditText(row.performedTime) || "không rõ"}; trả kết quả ${auditText(row.resultTime) || "không rõ"}.`
+      });
+    }
+    // Results that could not be loaded: the albumin check did not run for them.
+    for (const reason of auditState.labErrors) {
+      errors.push({ module: "Hệ thống", item: "", message: `Không tải được kết quả xét nghiệm (kiểm tra Albumin): ${reason}` });
+    }
+    return errors;
+  }
+
   // scanned: { xn, thuoc, pttt } = the "Kiểm tra" buttons when the scan started.
-  // Only the rules of what was scanned are reported: Xét nghiệm -> DVKT, CT,
-  // Bộ mỡ, HbA1C; Thuốc -> Thuốc, Thiếu chẩn đoán; PTTT -> PTTT.
+  // Only the rules of what was scanned are reported: Xét nghiệm -> CT,
+  // Bộ mỡ, HbA1C, Albumin; Thuốc -> Thuốc, Thiếu chẩn đoán; PTTT -> PTTT.
+  // The DVKT checks (outside the treatment period, contraindicated ICD, ...)
+  // are not reported in QUÉT; they still show in the DVKT panel.
   function scanCollectFindings(info, scanned = { xn: true, thuoc: true, pttt: true }) {
     const errors = [];
-    renderDVKTPanel();
-    if (scanned.xn) for (const cells of scanRowsWithClass(dvktUI.body, "tr.hth-audit-dvkt-row-bad")) {
-      errors.push({ module: "DVKT", date: scanFirstDay(cells[3], cells[4], cells[5]), time: scanFirstTime(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
-    }
+    // The DVKT rule checks (renderDVKTPanel) are skipped: QUÉT only needs the
+    // captured DVKT/XN rows themselves (Bộ mỡ, HbA1c, CT, the XN table).
     renderDrugPanel();
     if (scanned.thuoc) for (const cells of scanRowsWithClass(drugUI.body, "tr.hth-audit-drug-row-bad")) {
       errors.push({ module: "Thuốc", date: scanFirstDay(cells[3]), time: scanFirstTime(cells[3]), item: `${cells[0] || ""}${cells[3] ? ` (${cells[3]})` : ""}`, message: cells[cells.length - 1] || "" });
@@ -3461,18 +3595,24 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     }
     const pttt = scanned.pttt ? scanPtttFindings() : { errors: [], rows: [] };
     errors.push(...pttt.errors);
+    if (scanned.xn) errors.push(...scanAlbuminFindings());
     const fallbackDay = (info && info.visitDate) || auditDateOnly(auditState.context && auditState.context.admissionDate || "");
-    // Every XN/DVKT row (clean or not), for the "Dòng XN" table. renderDVKTPanel
-    // ran above and left them in dvktLastDisplayRows.
+    // Every XN/DVKT row captured for the visit, for the "Xét nghiệm / DVKT"
+    // table (order day/time, else the first performed/result time). No row is
+    // marked red: the DVKT checks are not part of QUÉT.
     const cutoff = scanSkipCutoff();
-    const xnRows = scanned.xn ? dvktLastDisplayRows
-      .filter(row => !scanIsTooOld(row.day, cutoff))
-      .map(row => ({ day: row.day || "", dateTime: row.dateTime || "", code: auditText(row.code), name: auditText(row.name),
-        quantity: auditText(row.quantity), status: row.status || "", bad: !!row.hasWarning })) : [];
+    const xnRows = scanned.xn ? Array.from(auditState.dvktRows.values())
+      .map(row => {
+        const source = rowOrderSource(row, Array.isArray(row.timePoints) ? row.timePoints : []);
+        return { day: auditDateOnly(source), dateTime: auditDateTimeText(source),
+          code: auditText(row.bhytCode || row.hisCode || row.serviceCode), name: auditText(row.name),
+          quantity: auditText(row.quantity), status: "", bad: false };
+      })
+      .filter(row => !scanIsTooOld(row.day, cutoff)) : [];
     // Every PTTT row (clean or not), for the "PTTT" table.
     const ptttRows = pttt.rows.filter(row => !scanIsTooOld(row.day, cutoff));
     // Rows dated more than SCAN_SKIP_OLDER_MONTHS ago are skipped, their errors too.
-    const xnModules = new Set(["DVKT", "CT", "PTTT"]);
+    const xnModules = new Set(["DVKT", "CT", "PTTT", "Albumin"]);
     return {
       errors: errors.filter(err => !(xnModules.has(err.module) && scanIsTooOld(err.date, cutoff))),
       xnRows,
@@ -3509,6 +3649,15 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
           const li = document.createElement("li");
           if (err.isInfo) li.className = "sc-info";
           if (err.detail) li.title = err.detail;
+          if (err.lines) {
+            // Bộ mỡ / HbA1c: title + count line, then one line per test day.
+            li.append(auditElement("b", "", `${err.title} `), document.createTextNode(err.message));
+            const sub = auditElement("ul", "sc-repeat-lines");
+            for (const line of err.lines) sub.appendChild(auditElement("li", "", line));
+            li.appendChild(sub);
+            list.appendChild(li);
+            continue;
+          }
           if (err.headline) {
             // Bộ mỡ / HbA1C: "2 LẦN XÉT NGHIỆM MỠ MÁU - 05/11/2026 08:15:00: ..."
             const when = err.date ? `${err.date}${err.time ? " " + err.time : ""}` : "--/--/----";
@@ -3669,7 +3818,9 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
   async function scanByBhyt(input) {
     if (scanRunning) return;
     const raw = String(input || "").replace(/\s+/g, "").toUpperCase();
-    // The HIS box takes the last 10 characters of the card number.
+    // HIS finds the patient only with the full card number (e.g.
+    // LH292094139001574); the last 10 characters are kept to match rows and as
+    // a fallback search when the full number returns nothing.
     const code = raw.slice(-10);
     if (code.length < 10) { scanStatus.textContent = "Nhập Mã thẻ BHYT (ít nhất 10 ký tự cuối)."; return; }
     scanStore("hthScanBhyt", raw);
@@ -3684,10 +3835,15 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
         if (listTab) { scanClickHisTab(listTab); await scanSleep(300); }
       }
       // (1) Mã BHYT -> name, birth year, address.
-      scanStatus.textContent = `Bước 1/3: tìm theo Mã BHYT ${code}…`;
-      const first = await scanHisSearch({ txtMA_BHYT: code });
-      const cardRows = first.rows.filter(r => !r.bhyt || r.bhyt.toUpperCase().endsWith(code));
-      if (!cardRows.length) throw new Error(`Không tìm thấy bệnh nhân có Mã BHYT ${code}.`);
+      scanStatus.textContent = `Bước 1/3: tìm theo Mã BHYT ${raw}…`;
+      let first = await scanHisSearch({ txtMA_BHYT: raw });
+      let cardRows = first.rows.filter(r => !r.bhyt || r.bhyt.toUpperCase().endsWith(code));
+      if (!cardRows.length && raw !== code) {
+        scanStatus.textContent = `Bước 1/3: tìm theo Mã BHYT ${code} (10 ký tự cuối)…`;
+        first = await scanHisSearch({ txtMA_BHYT: code });
+        cardRows = first.rows.filter(r => !r.bhyt || r.bhyt.toUpperCase().endsWith(code));
+      }
+      if (!cardRows.length) throw new Error(`Không tìm thấy bệnh nhân có Mã BHYT ${raw}.`);
       // The most recent visit gives the name and birth year searched in step 2.
       const latest = [...cardRows].sort((a, b) => (scanParseDay(b.visitDate) || 0) - (scanParseDay(a.visitDate) || 0))[0];
       const name = latest.name;
@@ -3697,7 +3853,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       const addresses = new Map();
       for (const r of cardRows) if (scanLooseText(r.address)) addresses.set(scanLooseText(r.address), r.address);
       if (!addresses.size) throw new Error("Không đọc được địa chỉ (cột DIACHI) trong kết quả tìm theo BHYT.");
-      lookup = { code, name, birthYear, addresses: [...addresses.values()] };
+      lookup = { code: raw, name, birthYear, addresses: [...addresses.values()] };
       // (2) name + birth year -> everyone with them.
       scanStatus.textContent = `Bước 2/3: tìm theo họ tên ${name} + năm sinh ${birthYear}…`;
       const second = await scanHisSearch({ txtTENBENHNHAN: name, txtNGAYSINH: birthYear });
@@ -3753,7 +3909,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     scanRunning = true; scanStopRequested = false; scanResults = []; scanSummaryPrefix = "";
     const scanned = { xn: scanTabXn.checked, thuoc: scanTabThuoc.checked, pttt: scanTabPttt.checked };
     // While scanning, also open phiếu lists whose tab is not on screen.
-    scanMainCall({ action: "setScanMode", value: true, kinds: { dvkt: scanTabXn.checked || scanTabThuoc.checked || scanTabPttt.checked, drug: scanTabThuoc.checked } });
+    scanMainCall({ action: "setScanMode", value: true, kinds: { dvkt: scanTabXn.checked || scanTabThuoc.checked || scanTabPttt.checked, drug: scanTabThuoc.checked, lab: scanTabXn.checked } });
     scanStartBtn.disabled = true; scanBhytBtn.disabled = true; scanStopBtn.disabled = false;
     scanRenderResults();
     const grid = document.getElementById("grdLS");
@@ -3761,7 +3917,6 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
     const originalInfo = originalRow ? scanRowInfo(originalRow, -1) : null;
     try {
       for (const info of patients) {
-        await scanWaitVisible();
         if (scanStopRequested) break;
         const row = scanResolveRow(info);
         if (!row) continue;

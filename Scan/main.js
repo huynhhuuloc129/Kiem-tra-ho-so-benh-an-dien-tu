@@ -801,8 +801,135 @@
   let hthRestInFlight = 0;
   let hthRestLastActivity = 0;
 
+  // ---------------------------------------------------------------------------
+  // KẾT QUẢ XÉT NGHIỆM (NT.024.2). HIS loads a phiếu's result values only when
+  // the "Kết quả xét nghiệm" tab is opened. Results HIS loads by itself are
+  // read as they pass; during QUÉT the helper also asks for them once per phiếu,
+  // reusing the last ajaxExecuteQueryPaging request HIS sent (same URL, headers
+  // and token) with only the query name and the phiếu ID changed.
+  // ---------------------------------------------------------------------------
+  const HTH_LAB_RESULT_QUERY = "NT.024.2";
+  let hthPagingTemplate = null;
+  // "<visit key>#<MAUBENHPHAMID>" already requested in this QUÉT visit.
+  const hthLabFetched = new Set();
+  function hthRememberPagingTemplate(url, method, body, headers) {
+    try {
+      if (!/ajaxExecuteQueryPaging/i.test(hthRequestText(url, body))) return;
+      hthPagingTemplate = { url: String(url || ""), method: String(method || "GET"), body: String(body || ""), headers: Array.isArray(headers) ? headers.slice() : [] };
+    } catch (_) {}
+  }
+  // The RPC JSON with params/options switched to NT.024.2 for `phieuId`, or ""
+  // when `text` is not an ajaxExecuteQueryPaging call.
+  function hthRewritePagingRpc(text, phieuId) {
+    let rpc = null;
+    try { rpc = JSON.parse(String(text || "")); } catch (_) { return ""; }
+    if (!rpc || typeof rpc !== "object" || !/ajaxExecuteQueryPaging/i.test(String(rpc.func || ""))) return "";
+    rpc.params = [HTH_LAB_RESULT_QUERY];
+    rpc.options = [{ name: "[0]", value: String(phieuId) }];
+    return JSON.stringify(rpc);
+  }
+  // Paging fields jqGrid adds next to postData: first page, enough rows, no cache.
+  function hthAdjustPaging(params) {
+    if (params.has("page")) params.set("page", "1");
+    if (params.has("rows")) params.set("rows", "500");
+    if (params.has("nd")) params.set("nd", String(Date.now()));
+  }
+  function hthBuildLabRequest(phieuId) {
+    const t = hthPagingTemplate;
+    if (!t) return null;
+    let url = t.url, body = t.body, rewritten = false;
+    try {
+      const u = new URL(url, location.href);
+      const postData = u.searchParams.get("postData");
+      const next = postData !== null ? hthRewritePagingRpc(postData, phieuId) : "";
+      if (next) { u.searchParams.set("postData", next); rewritten = true; }
+      if (u.search) { hthAdjustPaging(u.searchParams); url = u.toString(); }
+    } catch (_) {}
+    if (body) {
+      const direct = hthRewritePagingRpc(body, phieuId);
+      if (direct) { body = direct; rewritten = true; }
+      else {
+        try {
+          const form = new URLSearchParams(body);
+          const postData = form.get("postData");
+          const next = postData !== null ? hthRewritePagingRpc(postData, phieuId) : "";
+          if (next) { form.set("postData", next); rewritten = true; }
+          hthAdjustPaging(form);
+          body = form.toString();
+        } catch (_) {}
+      }
+    }
+    return rewritten ? { url, method: t.method, body, headers: t.headers } : null;
+  }
+  // Sent with the native XHR methods so neither capture hook sees it twice.
+  function hthRequestLabResults(phieuId) {
+    return new Promise(resolve => {
+      const req = hthBuildLabRequest(phieuId);
+      if (!req) return resolve({ ok: false, error: "chưa thấy yêu cầu ajaxExecuteQueryPaging nào của HIS" });
+      try {
+        const xhr = new XMLHttpRequest();
+        originalOpen.call(xhr, req.method, req.url, true);
+        for (const [name, value] of req.headers) { try { originalSetRequestHeader.call(xhr, name, value); } catch (_) {} }
+        xhr.timeout = 15000;
+        xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300 ? { ok: true, text: xhr.responseText } : { ok: false, error: `HTTP ${xhr.status}` });
+        xhr.onerror = () => resolve({ ok: false, error: "lỗi mạng" });
+        xhr.ontimeout = () => resolve({ ok: false, error: "quá 15 giây" });
+        originalSend.call(xhr, /^GET$/i.test(req.method) ? null : req.body);
+      } catch (err) { resolve({ ok: false, error: String(err && err.message || err) }); }
+    });
+  }
+  async function hthFetchLabResultsForJob(job) {
+    for (const p of job.phieu) {
+      if (hthWalkAbort || readHISContext().key !== job.key) return;
+      const mark = `${job.key}#${p.id}`;
+      if (hthLabFetched.has(mark)) continue;
+      hthLabFetched.add(mark);
+      const res = await hthRequestLabResults(p.id);
+      if (!res.ok) {
+        hthEmit({ type: "labError", key: job.key, kind: job.kind, error: res.error });
+        if (!hthPagingTemplate) return;
+        continue;
+      }
+      hthPublishLabResults(res.text, { key: job.key });
+    }
+  }
+  // One row per result line: Na+, K+, Albumin, ... with value, unit and time.
+  function hthPublishLabResults(responseText, requestContext) {
+    let data = null;
+    try { data = JSON.parse(responseText || "null"); } catch (_) { return; }
+    const rows = Array.isArray(data && data.rows) ? data.rows : (Array.isArray(data) ? data : []);
+    const key = (requestContext && requestContext.key) || readHISContext().key || "";
+    if (!key || readHISContext().key !== key) return;
+    const get = (r, name) => {
+      const k = Object.keys(r || {}).find(x => x.toUpperCase() === name);
+      return k && r[k] != null ? String(r[k]).trim() : "";
+    };
+    const out = [];
+    for (const r of rows) {
+      if (!r || typeof r !== "object" || !Object.keys(r).some(k => k.toUpperCase() === "GIATRI_KETQUA")) continue;
+      const normalRange = get(r, "TRISOBINHTHUONG");
+      const rangeUnit = normalRange.includes("|") ? normalRange.split("|").pop().trim() : "";
+      out.push({
+        key: get(r, "KETQUACLSID") || [get(r, "MAUBENHPHAMID"), get(r, "DICHVUKHAMBENHID"), get(r, "MADICHVU"), get(r, "TENDICHVU")].join("|"),
+        phieuId: get(r, "MAUBENHPHAMID"),
+        code: get(r, "MADICHVU"), bhytCode: get(r, "MADMBYT"),
+        name: get(r, "TENDICHVU"), orderName: get(r, "TENCHIDINH"),
+        value: get(r, "GIATRI_KETQUA"),
+        unit: rangeUnit || get(r, "DONVI"),
+        normalRange: normalRange.split("|")[0].trim(),
+        resultTime: get(r, "THOIGIANTRAKETQUA1") || get(r, "THOIGIANTRAKETQUA2") || get(r, "THOIGIANTRAKETQUA"),
+        performedTime: get(r, "TGTHUCHIEN"),
+        status: get(r, "TRANGTHAIKETQUA")
+      });
+    }
+    window.postMessage({ __hisTimeHelperV31: true, type: "LAB_RESULTS", context: { key }, rows: out }, "*");
+  }
+
   const originalFetch = window.fetch;
-  const isRestServiceUrl = url => String(url || "").toLowerCase().includes("restservice");
+  const isRestServiceUrl =url => String(url || "").toLowerCase().includes("restservice");
+  // Capture only from the visible tab, except during QUÉT, which keeps running
+  // while the user works in another tab or app.
+  const hthCaptureActive = () => hthScanMode || document.visibilityState === "visible";
   if (typeof originalFetch === "function") {
     window.fetch = function(...args) {
       let requestUrl = "";
@@ -811,19 +938,25 @@
         requestUrl = req && typeof req === "object" ? req.url : req;
       } catch (_) {}
       // Preserve the native fetch path for unrelated calls and background HIS tabs.
-      if (!isRestServiceUrl(requestUrl) || document.visibilityState !== "visible") {
+      if (!isRestServiceUrl(requestUrl) || !hthCaptureActive()) {
         return originalFetch.apply(this, args);
       }
       const requestContext = readHISContext();
       const requestBody = args[1] && typeof args[1].body === "string" ? args[1].body : "";
+      try {
+        const init = args[1] || {};
+        const headers = init.headers ? Array.from(new Headers(init.headers).entries()) : [];
+        hthRememberPagingTemplate(requestUrl, init.method || (requestBody ? "POST" : "GET"), requestBody, headers);
+      } catch (_) {}
       hthRestInFlight++;
       return originalFetch.apply(this, args).then(res => {
         try {
           // A tab may have become backgrounded while the request was in flight.
           // Do not clone/read large bodies when the user is working elsewhere.
-          if (document.visibilityState !== "visible") return res;
+          if (!hthCaptureActive()) return res;
           res.clone().text().then(text => {
-            if (document.visibilityState !== "visible") return;
+            if (!hthCaptureActive()) return;
+            if (hisQueryName(requestUrl, requestBody) === HTH_LAB_RESULT_QUERY) hthPublishLabResults(text, requestContext);
             hthInspectPhieuList(requestUrl, requestBody, text, requestContext);
             queueResponseText(text, requestUrl, requestContext, hisQueryName(requestUrl, requestBody));
           }).catch(() => {});
@@ -835,19 +968,32 @@
 
   const originalOpen = XMLHttpRequest.prototype.open;
   const originalSend = XMLHttpRequest.prototype.send;
+  const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.open = function(method, url, ...rest) {
     this.__hthUrl = String(url || "");
+    this.__hthMethod = String(method || "GET");
+    this.__hthHeaders = [];
     return originalOpen.call(this, method, url, ...rest);
+  };
+  XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+    try { if (Array.isArray(this.__hthHeaders)) this.__hthHeaders.push([String(name), String(value)]); } catch (_) {}
+    return originalSetRequestHeader.call(this, name, value);
   };
   XMLHttpRequest.prototype.send = function(...args) {
     const url = String(this.__hthUrl || "");
     // Do not install a load listener on every ordinary HIS XHR. Only RestService
     // calls from the visible tab are candidates for helper capture.
-    if (!isRestServiceUrl(url) || document.visibilityState !== "visible") {
+    if (!isRestServiceUrl(url) || !hthCaptureActive()) {
       return originalSend.apply(this, args);
     }
     const requestContext = readHISContext();
     const requestBody = typeof args[0] === "string" ? args[0] : "";
+    hthRememberPagingTemplate(url, this.__hthMethod, requestBody, this.__hthHeaders);
+    if (hisQueryName(url, requestBody) === HTH_LAB_RESULT_QUERY) {
+      this.addEventListener("load", function() {
+        try { if (this.status >= 200 && this.status < 300) hthPublishLabResults(this.responseText, requestContext); } catch (_) {}
+      }, {once: true});
+    }
     hthRestInFlight++;
     this.addEventListener("loadend", () => {
       hthRestInFlight = Math.max(0, hthRestInFlight - 1);
@@ -855,7 +1001,7 @@
     }, {once: true});
     this.addEventListener("load", function() {
       try {
-        if (document.visibilityState !== "visible") return;
+        if (!hthCaptureActive()) return;
         hthInspectPhieuList(this.__hthUrl, requestBody, this.responseText, requestContext);
         queueResponseText(this.responseText, this.__hthUrl, requestContext, hisQueryName(this.__hthUrl, requestBody));
       } catch (_) {}
@@ -886,7 +1032,8 @@
   const hthScanWalked = new Set();
   // Which list kinds QUÉT opens, from the scan panel's "Tự mở" buttons:
   // Xét nghiệm -> phiếu DVKT (DSPHIEU...), Thuốc -> đơn thuốc (DSTHUOC...).
-  let hthScanKinds = { dvkt: true, drug: true };
+  // lab: also load each phiếu DVKT's results (NT.024.2) for the albumin check.
+  let hthScanKinds = { dvkt: true, drug: true, lab: false };
   const hthScanKindOn = kind => /thuốc/i.test(String(kind || "")) ? hthScanKinds.drug : hthScanKinds.dvkt;
   function hthScanEnqueue(job) {
     if (!hthScanKindOn(job.kind)) return false;
@@ -896,7 +1043,27 @@
     return true;
   }
   let hthWalkAbort = "";
-  const hthSleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  // Chrome throttles timers in hidden tabs (1 s, then 1 per minute after 5 min).
+  // Timers inside a dedicated Worker are not throttled, so while the tab is
+  // hidden sleep through a tiny Worker; fall back to setTimeout if it is blocked.
+  function hthMakeBackgroundSleep() {
+    let worker = null, seq = 0;
+    const pending = new Map();
+    const flush = () => { worker = null; for (const done of pending.values()) done(); pending.clear(); };
+    try {
+      const src = "onmessage=e=>setTimeout(()=>postMessage(e.data),e.data.ms)";
+      worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+      worker.onmessage = e => { const done = pending.get(e.data.id); if (done) { pending.delete(e.data.id); done(); } };
+      worker.onerror = flush;
+    } catch (_) { worker = null; }
+    return ms => new Promise(resolve => {
+      if (!worker || document.visibilityState === "visible") { setTimeout(resolve, ms); return; }
+      const id = ++seq;
+      pending.set(id, resolve);
+      try { worker.postMessage({ id, ms }); } catch (_) { pending.delete(id); setTimeout(resolve, ms); }
+    });
+  }
+  const hthSleep = hthMakeBackgroundSleep();
   const hthEmit = payload => window.postMessage({ __hthWalkEvent: true, ...payload }, "*");
 
   function hthRequestText(url, body) {
@@ -1110,6 +1277,9 @@
       await hthWaitHisIdle();
       hthEmit({ type: "progress", key: job.key, kind: job.kind, done: openedIds.size, total });
     }
+    // QUÉT with "Xét nghiệm" on: load the results of every phiếu DVKT of the
+    // list (the "Kết quả xét nghiệm" tab) so content.js can check albumin.
+    if (!hthWalkAbort && hthScanMode && hthScanKinds.lab && !/thuốc/i.test(job.kind)) await hthFetchLabResultsForJob(job);
     const opened = openedIds.size;
     // Restore the user's earlier selection only if that row is still in this list.
     if (!hthWalkAbort && previous && previous !== lastId &&
@@ -1154,13 +1324,15 @@
       }
       if (action === "scanVisitStart") {
         hthScanWalked.clear();
+        hthLabFetched.clear();
         return reply({ ok: true });
       }
       if (action === "setScanMode") {
         hthScanMode = !!event.data.value;
         hthScanWalked.clear();
+        hthLabFetched.clear();
         const kinds = event.data.kinds || {};
-        hthScanKinds = { dvkt: kinds.dvkt !== false, drug: kinds.drug !== false };
+        hthScanKinds = { dvkt: kinds.dvkt !== false, drug: kinds.drug !== false, lab: kinds.lab === true };
         // Scan finished or stopped: do not keep opening phiếu on our own.
         if (!hthScanMode) {
           hthWalkQueue.length = 0;

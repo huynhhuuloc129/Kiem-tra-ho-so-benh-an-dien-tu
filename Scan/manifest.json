@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Scan",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "QUÉT bệnh nhân trên HIS: xét nghiệm, thuốc, PTTT, thiếu chẩn đoán, xét nghiệm lặp lại.",
   "host_permissions": [
     "https://bvdksoctrang.vncare.vn/*"
