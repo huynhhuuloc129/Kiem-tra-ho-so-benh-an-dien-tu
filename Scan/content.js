@@ -137,6 +137,32 @@
   // arrive before the page shows the new case (and HIS may not resend it when
   // a case is reopened), so it is kept here instead of being dropped.
   const icdCacheByHoSoId = new Map();
+  // Patient details (card, name, DOB, gender, KV, card period, admission and
+  // discharge) from main.js "PATIENT" messages, by case number (BA...). Used by
+  // the BHYT check of QUÉT to fill the BHYT portal.
+  const scanPatientByCase = new Map();
+  // MA_KCBBD (HIS "Nơi ĐK KCB ban đầu" code) from main.js "KCBBD" messages, by
+  // normalized case number and by the last 10 characters of the card number.
+  const scanKcbbdByKey = new Map();
+  const scanKcbbdCardKey = card => { const c = scanBhytNorm(card); return c.length >= 10 ? "THE:" + c.slice(-10) : ""; };
+  // Reply of main.js to a KCBBD_ASK for one patient, by normalized case number:
+  // "found", "noList" (no patient list with MA_KCBBD seen) or "notInList".
+  const scanKcbbdStatus = new Map();
+  // The patient list may have loaded before this script: ask main.js for the codes it kept.
+  window.postMessage({ __scanMsgV1: true, type: "KCBBD_ASK" }, "*");
+  // TKNOICD (HIS "Nơi KCBBĐ") from NT.005, by normalized case number (BA...).
+  const scanTkNoiCdByCase = new Map();
+  // Why NT.005 gave no TKNOICD for a case (ids tried and what came back).
+  const scanTkNoiCdMiss = new Map();
+  // Cases whose NT.005 record has TKNOICD empty (nothing to read on HIS either).
+  const scanTkNoiCdEmpty = new Set();
+  // Ask icd_capture.js (page world) to call NT.005 for this case with every id
+  // of the open case; it keeps only the reply whose MAHOSOBENHAN is this case.
+  function scanAskTkNoiCd(info) {
+    const read = id => { const el = document.getElementById(id); return el && "value" in el ? String(el.value || "").trim() : ""; };
+    const ids = [read("hidHOSOBENHANID"), read("hidKHAMBENHID"), read("hidTIEPNHANID"), info && info.rowId];
+    window.postMessage({ __hthTkNoiCdAsk: true, caseNo: info && info.caseNo || "", ids }, "*");
+  }
   function auditText(value) { return String(value ?? "").trim(); }
   function auditQty(value) {
     const s = auditText(value).replace(/,/g, ".").replace(/[^0-9.\-]/g, "");
@@ -2382,15 +2408,70 @@
 
   window.addEventListener("message", event => {
     if (event.source !== window || !event.data ||
-        (event.data.__hisTimeHelperV31 !== true && event.data.__hisTimeHelperIcdV1 !== true)) return;
+        (event.data.__scanMsgV1 !== true && event.data.__scanIcdMsgV1 !== true)) return;
     if (event.data.type === "PATIENT" && event.data.patient && typeof event.data.patient === "object") {
       // A patient-detail response may follow a case switch: re-check the open case
       // (one scheduled DOM scan per response burst).
       const p = event.data.patient;
-      if (p.caseNo && p.card && p.name && p.dob) scheduleEncounterCheck(120);
+      if (p.caseNo && p.card && p.name && p.dob) {
+        // Several responses can describe the same case; a later, smaller one may
+        // omit fields an earlier one had. Merge non-empty fields only.
+        const key = scanBhytNorm(p.caseNo);
+        const merged = { ...(scanPatientByCase.get(key) || {}) };
+        for (const field of ["caseNo", "patientId", "card", "name", "dob", "kv", "gender", "registrationFacility", "tkNoiCd",
+          "cardValidityPeriod", "hisCardStart", "hisCardExpiry", "admissionDate", "dischargeDate"]) {
+          const value = String(p[field] ?? "").trim();
+          if (value) merged[field] = field === "dob" ? scanBhytDateOnly(value) : value;
+        }
+        scanPatientByCase.delete(key);
+        scanPatientByCase.set(key, merged);
+        if (scanPatientByCase.size > 300) scanPatientByCase.delete(scanPatientByCase.keys().next().value);
+        scheduleEncounterCheck(120);
+      }
       return;
     }
-    if (event.data.type === "ICD_DATA" && event.data.__hisTimeHelperIcdV1 === true) {
+    if (event.data.type === "KCBBD_STATUS") {
+      const key = scanBhytNorm(event.data.caseNo);
+      if (key) scanKcbbdStatus.set(key, { status: String(event.data.status || ""), listRows: Number(event.data.listRows) || 0 });
+      while (scanKcbbdStatus.size > 300) scanKcbbdStatus.delete(scanKcbbdStatus.keys().next().value);
+    }
+    if ((event.data.type === "KCBBD" || event.data.type === "KCBBD_STATUS") && Array.isArray(event.data.facilities)) {
+      for (const f of event.data.facilities) {
+        const code = String((f && f.code) || "").trim();
+        if (!code) continue;
+        for (const key of [scanBhytNorm(f.caseNo), f.patientId ? "BN:" + scanBhytNorm(f.patientId) : "", scanKcbbdCardKey(f.card)]) {
+          if (!key) continue;
+          scanKcbbdByKey.delete(key);
+          scanKcbbdByKey.set(key, code);
+        }
+      }
+      while (scanKcbbdByKey.size > 2000) scanKcbbdByKey.delete(scanKcbbdByKey.keys().next().value);
+      return;
+    }
+    if (event.data.type === "TKNOICD" && event.data.__scanIcdMsgV1 === true) {
+      const key = scanBhytNorm(event.data.caseNo);
+      const value = String(event.data.tkNoiCd || "").trim();
+      if (key && value) {
+        scanTkNoiCdMiss.delete(key);
+        scanTkNoiCdByCase.delete(key);
+        scanTkNoiCdByCase.set(key, value);
+        if (scanTkNoiCdByCase.size > 500) scanTkNoiCdByCase.delete(scanTkNoiCdByCase.keys().next().value);
+      }
+      return;
+    }
+    if (event.data.type === "TKNOICD_EMPTY" && event.data.__scanIcdMsgV1 === true) {
+      const key = scanBhytNorm(event.data.caseNo);
+      if (key && !scanTkNoiCdByCase.has(key)) scanTkNoiCdEmpty.add(key);
+      if (scanTkNoiCdEmpty.size > 500) scanTkNoiCdEmpty.delete(scanTkNoiCdEmpty.values().next().value);
+      return;
+    }
+    if (event.data.type === "TKNOICD_MISS" && event.data.__scanIcdMsgV1 === true) {
+      const key = scanBhytNorm(event.data.caseNo);
+      if (key && !scanTkNoiCdByCase.has(key)) scanTkNoiCdMiss.set(key, String(event.data.reason || ""));
+      if (scanTkNoiCdMiss.size > 500) scanTkNoiCdMiss.delete(scanTkNoiCdMiss.keys().next().value);
+      return;
+    }
+    if (event.data.type === "ICD_DATA" && event.data.__scanIcdMsgV1 === true) {
       const incomingHoSoId = auditNormalizeHoSoId(event.data.hoSoBenhAnId || (event.data.icdData && event.data.icdData.hoSoBenhAnId));
       const currentHoSoId = auditCurrentHoSoId() || auditNormalizeHoSoId(auditState.context && auditState.context.hoSoBenhAnId);
       if (!incomingHoSoId) return;
@@ -2401,6 +2482,7 @@
         mainCode: String(incomingIcd.mainCode || "").trim().toUpperCase(),
         mainName: String(incomingIcd.mainName || "").trim(),
         admissionTime: String(incomingIcd.admissionTime || "").trim(),
+        tkNoiCd: String(incomingIcd.tkNoiCd || "").trim(),
         diagnoses: incomingIcd.diagnoses.map(item => ({
           code: String(item && item.code || "").trim().toUpperCase(),
           name: String(item && item.name || "").trim()
@@ -2738,6 +2820,7 @@
     #scanx-scan-panel .sc-opts{display:grid;gap:5px;margin:0 0 8px;padding:7px 8px;border:1px solid #eef0f3;border-radius:7px;background:#fcfcfd}
     #scanx-scan-panel .sc-opt-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
     #scanx-scan-panel .sc-opt-label{width:96px;color:#6b7280;font-weight:700}
+    #scanx-scan-panel .sc-opts input.sc-bhyt:disabled{opacity:.55;background:#eef1f5}
     #scanx-scan-panel .sc-opts input.sc-bhyt{width:200px;height:26px;box-sizing:border-box;background:#fff;color:#1f2937;border:1px solid #b8c2d1;border-radius:5px;padding:4px 6px;font-size:11px}
     #scanx-scan-panel .sc-lookup{border:1px solid #c9d7ea;background:#f3f8ff;border-radius:6px;padding:6px 8px;margin-bottom:6px;line-height:1.45}
     #scanx-scan-panel .sc-lookup ul{margin:3px 0 0 16px;padding:0}
@@ -2782,6 +2865,7 @@
     #scanx-scan-panel th{background:#f1f5f9;text-align:left}
     #scanx-scan-panel td,#scanx-scan-panel th{padding:3px 4px;border-bottom:1px solid #e7ebef;vertical-align:top;overflow-wrap:anywhere}
     #scanx-scan-panel td.sc-bad{color:#b91c1c;font-weight:700;background:#fff0f0}
+    #scanx-scan-panel td.sc-warn{color:#8a5a00;background:#fff8d6}
   `;
   (document.head || document.documentElement).appendChild(scanStyle);
 
@@ -2809,6 +2893,7 @@
         <label class="sc-chip" title="Kiểm tra xét nghiệm: tự mở tab Xét nghiệm và tất cả phiếu xét nghiệm của từng bệnh nhân"><input type="checkbox" data-scan-tab-xn><span>Xét nghiệm</span></label>
         <label class="sc-chip" title="Kiểm tra thuốc: tự mở tab Thuốc và tất cả đơn thuốc của từng bệnh nhân"><input type="checkbox" data-scan-tab-thuoc><span>Thuốc</span></label>
         <label class="sc-chip" title="Kiểm tra PTTT: tự mở tab PTTT của từng bệnh nhân và báo dịch vụ không đủ thời gian thực hiện"><input type="checkbox" data-scan-tab-pttt><span>PTTT</span></label>
+        <label class="sc-chip" title="Đối chiếu BHYT: tự tra cứu thẻ của từng bệnh nhân trên cổng giám định BHYT (cần mở sẵn trang Thông tuyến khám chữa bệnh) và báo chỗ không khớp với HIS"><input type="checkbox" data-scan-tab-bhyt><span>BHYT</span></label>
 </div>
       <div class="sc-opt-row"><span class="sc-opt-label">Hiện</span>
         <label class="sc-chip" title="Bật: chỉ hiện ca và dòng có lỗi. Tắt: hiện tất cả dòng xét nghiệm, có lỗi và không lỗi"><input type="checkbox" data-scan-filter><span>Chỉ hiện lỗi</span></label>
@@ -2916,12 +3001,23 @@
   const scanTabThuoc = scanPanel.querySelector("[data-scan-tab-thuoc]");
   scanTabXn.checked = scanLoad("hthScanTabXN", "1") !== "0";
   scanTabThuoc.checked = scanLoad("hthScanTabThuoc", "1") !== "0";
-  scanTabXn.addEventListener("change", () => scanStore("hthScanTabXN", scanTabXn.checked ? "1" : "0"));
+  scanTabXn.addEventListener("change", () => { scanStore("hthScanTabXN", scanTabXn.checked ? "1" : "0"); scanSyncBhytRow(); });
   scanTabThuoc.addEventListener("change", () => scanStore("hthScanTabThuoc", scanTabThuoc.checked ? "1" : "0"));
   const scanTabPttt = scanPanel.querySelector("[data-scan-tab-pttt]");
   scanTabPttt.checked = scanLoad("hthScanTabPTTT", "1") !== "0";
   scanTabPttt.addEventListener("change", () => scanStore("hthScanTabPTTT", scanTabPttt.checked ? "1" : "0"));
+  // "Theo BHYT" only makes sense with "Xét nghiệm" ticked; off while a scan runs.
+  function scanSyncBhytRow() {
+    const off = !scanTabXn.checked;
+    scanBhytInput.disabled = off;
+    scanBhytBtn.disabled = off || scanRunning;
+    scanBhytBtn.title = off ? "Bật \"Xét nghiệm\" để dùng Tìm & quét theo BHYT" : "";
+  }
   const scanAnyDataTab = () => scanTabXn.checked || scanTabThuoc.checked || scanTabPttt.checked;
+  // Off by default: it needs the BHYT portal open in another tab.
+  const scanTabBhyt = scanPanel.querySelector("[data-scan-tab-bhyt]");
+  scanTabBhyt.checked = scanLoad("hthScanTabBHYT", "0") === "1";
+  scanTabBhyt.addEventListener("change", () => scanStore("hthScanTabBHYT", scanTabBhyt.checked ? "1" : "0"));
 
   // Tuned for VNPT-HIS: one patient click triggers a burst of RestService calls,
   // which main.js parses during idle time. Wait for that burst to go quiet.
@@ -2932,6 +3028,7 @@
 
   let scanRunning = false;
   let scanStopRequested = false;
+  scanSyncBhytRow();
   let scanLastDataAt = 0;
   let scanResults = [];
   // QUÉT theo BHYT: who was looked up and which visits were kept (shown above the results).
@@ -2949,11 +3046,11 @@
   let walkStartedAt = 0;
   window.addEventListener("message", event => {
     if (event.source !== window || !event.data) return;
-    if (event.data.__hthScanResponse === true && /^walk-/.test(String(event.data.id || "")) && !event.data.ok) {
+    if (event.data.__scanResponseV1 === true && /^walk-/.test(String(event.data.id || "")) && !event.data.ok) {
       showJumpToast(`Không mở được phiếu: ${event.data.error || "không rõ lý do"}`, true);
       return;
     }
-    if (event.data.__hthWalkEvent === true) {
+    if (event.data.__scanWalkEventV1 === true) {
       const ev = event.data;
       scanLastDataAt = Date.now();
       const kind = ev.kind || "phiếu";
@@ -2991,7 +3088,7 @@
       }
       return;
     }
-    if (event.data.__hisTimeHelperV31 !== true && event.data.__hisTimeHelperIcdV1 !== true) return;
+    if (event.data.__scanMsgV1 !== true && event.data.__scanIcdMsgV1 !== true) return;
     scanLastDataAt = Date.now();
   });
 
@@ -3047,7 +3144,9 @@
     const bhyt = cellText(/_MA_BHYT$|_MABHYT$/i);
     const address = cellText(/_DIACHI$/i);
     const birthYear = ((cellText(/_NGAYSINH$|_NAMSINH$/i) || dobText).match(/\b((?:19|20)\d{2})\b/) || [])[1] || "";
-    return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate, bhyt, address, birthYear,
+    // Full birth date (dd/MM/yyyy) when the list shows one: BHYT portal fallback.
+    const dob = ((cellText(/_NGAYSINH$/i) || dobText).match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b/) || [])[1] || "";
+    return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate, bhyt, address, birthYear, dob,
       label: [caseNo, name].filter(Boolean).join(" – ") || text.slice(0, 80) };
   }
   function scanPatientRows() {
@@ -3116,7 +3215,7 @@
     return new Promise(resolve => {
       const id = `scan-${Date.now()}-${++scanRequestSeq}`;
       const onMessage = event => {
-        if (event.source !== window || !event.data || event.data.__hthScanResponse !== true || event.data.id !== id) return;
+        if (event.source !== window || !event.data || event.data.__scanResponseV1 !== true || event.data.id !== id) return;
         window.removeEventListener("message", onMessage);
         clearTimeout(timer);
         resolve(event.data);
@@ -3126,7 +3225,7 @@
         resolve({ ok: false, error: "main.js không phản hồi (hãy tải lại tiện ích và trang HIS)" });
       }, 2000);
       window.addEventListener("message", onMessage);
-      window.postMessage({ __hthScanRequest: true, id, ...payload }, "*");
+      window.postMessage({ __scanRequestV1: true, id, ...payload }, "*");
     });
   }
   async function scanWaitKeyChange(previousKey, ms) {
@@ -3464,7 +3563,7 @@
     for (const result of scanResults) {
       result.errors = [...(result.baseErrors || []), ...repeatErrors.get(result)].map(err =>
         err.date ? err : { ...err, date: result.visitDate || "", dateFromVisit: !!result.visitDate });
-      result.infos = repeatInfos.get(result);
+      result.infos = [...(result.baseInfos || []), ...repeatInfos.get(result)];
     }
   }
 
@@ -3629,7 +3728,7 @@
     for (const result of scanResults) {
       const visibleErrors = scanVisibleErrors(result);
       const hasError = visibleErrors.length > 0;
-      const noData = !result.counts.dvkt && !result.counts.drug && !result.counts.services;
+      const noData = !result.counts.dvkt && !result.counts.drug && !result.counts.services && !(result.bhytRows && result.bhytRows.length);
       const infos = Array.isArray(result.infos) ? result.infos : [];
       // Every scanned patient stays listed; "Chỉ hiện lỗi" only hides clean XN rows.
       const box = auditElement("div", `sc-patient${hasError ? " sc-has-error" : ""}`);
@@ -3721,6 +3820,28 @@
         }
         details.appendChild(table); box.appendChild(details);
       }
+      // HIS vs BHYT portal, field by field (mismatches in red).
+      const bhytRows = Array.isArray(result.bhytRows) ? result.bhytRows : [];
+      if (bhytRows.length && (!onlyErrors || bhytRows.some(r => r.bad))) {
+        const badCount = bhytRows.filter(r => r.bad).length;
+        const details = document.createElement("details");
+        if (badCount) details.open = true;
+        details.appendChild(auditElement("summary", "", `BHYT – đối chiếu cổng${badCount ? ` · ${badCount} mục không khớp` : " · khớp"}`));
+        const table = document.createElement("table");
+        const thead = document.createElement("tr");
+        for (const h of ["Mục", "HIS", "Cổng BHYT", "Đối chiếu"]) thead.appendChild(auditElement("th", "", h));
+        table.appendChild(thead);
+        for (const r of bhytRows) {
+          if (onlyErrors && !r.bad) continue;
+          const tr = document.createElement("tr");
+          tr.appendChild(auditElement("td", "", r.field));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.his || "--"));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.portal || "--"));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : (r.warn ? "sc-warn" : ""), r.result));
+          table.appendChild(tr);
+        }
+        details.appendChild(table); box.appendChild(details);
+      }
       if (result.counts.dvkt || result.counts.drug) {
         box.appendChild(auditElement("div", "hth-audit-muted", `  DVKT ${result.counts.dvkt} · Thuốc ${result.counts.drug}`));
       }
@@ -3729,6 +3850,298 @@
     if (!scanResultsEl.querySelector(".sc-patient") && scanResults.length) {
       scanResultsEl.appendChild(auditElement("div", "hth-empty", "Không có ca nào có lỗi."));
     }
+  }
+
+  // ---- KIỂM TRA BHYT (cổng giám định) ----
+  // With "BHYT" on, every scanned patient is looked up on the BHYT portal
+  // (gdbhyt.baohiemxahoi.gov.vn, Thông tuyến KCB, open in another tab):
+  // bhyt_portal.js fills Mã thẻ / Họ tên / Ngày sinh, presses "Tra cứu" and
+  // sends back the notice for that card. The HIS data and the portal data are
+  // compared like the BHYT button of "Kiểm tra hồ sơ bệnh án điện tử":
+  // mismatches are errors (red), points to check are information (yellow).
+  const SCAN_BHYT_TIMEOUT_MS = 25000;
+  function scanBhytNorm(value) {
+    return String(value ?? "").trim().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "D")
+      .toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+  function scanBhytDateOnly(value) {
+    const s = String(value ?? "").trim();
+    let m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+    if (m) return `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3]}`;
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return `${m[3].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[1]}`;
+    return s.split(/[ T]/)[0];
+  }
+  function scanBhytValidCard(card, caseNo) {
+    const c = scanBhytNorm(card);
+    return /^[A-Z]{2}\d{10,16}$/.test(c) && c !== scanBhytNorm(caseNo) && !/^BA\d{6,}$/.test(c);
+  }
+  // A year-only birth date equals 01/01 of that year only (as in the BHYT button).
+  function scanBhytParseBirth(value) {
+    const s = String(value ?? "").trim();
+    let m = s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\b|$)/);
+    if (m) return { day: +m[1], month: +m[2], year: +m[3], yearOnly: false };
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:\b|$)/);
+    if (m) return { day: +m[3], month: +m[2], year: +m[1], yearOnly: false };
+    m = s.match(/^(\d{4})$/);
+    return m ? { day: null, month: null, year: +m[1], yearOnly: true } : null;
+  }
+  function scanBhytCompareBirth(hisValue, portalValue) {
+    const his = scanBhytParseBirth(hisValue), portal = scanBhytParseBirth(portalValue);
+    if (!his || !portal) return { status: "warn", text: "Chưa đủ dữ liệu để đối chiếu ngày sinh" };
+    if (his.yearOnly && portal.yearOnly) {
+      return his.year !== portal.year
+        ? { status: "bad", text: "Năm sinh khác nhau" }
+        : { status: "warn", text: "Cùng năm sinh, nhưng cả hai bên chỉ có năm" };
+    }
+    if (his.yearOnly || portal.yearOnly) {
+      const full = his.yearOnly ? portal : his, yearOnly = his.yearOnly ? his : portal;
+      return yearOnly.year === full.year && full.day === 1 && full.month === 1
+        ? { status: "good", text: "Khớp (chỉ có năm = 01/01 cùng năm)" }
+        : { status: "bad", text: "Không khớp (bên chỉ có năm chỉ khớp với 01/01 cùng năm)" };
+    }
+    return his.year === portal.year && his.month === portal.month && his.day === portal.day
+      ? { status: "good", text: "Khớp" } : { status: "bad", text: "Không khớp" };
+  }
+  function scanBhytDay(value) {
+    const m = String(value || "").trim().match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+    return m ? Date.UTC(+m[3], +m[2] - 1, +m[1]) : null;
+  }
+
+  // Is the portal tab open? (asked once when a scan with BHYT starts)
+  function scanBhytPing() {
+    return new Promise(resolve => {
+      try {
+        chrome.runtime.sendMessage({ type: "BHYT_PING" }, response => {
+          if (chrome.runtime.lastError) { resolve({ ok: false, error: "Không kết nối được tiện ích (hãy tải lại trang HIS)." }); return; }
+          resolve(response && response.ok ? { ok: true } : { ok: false });
+        });
+      } catch (err) { resolve({ ok: false, error: "Không kết nối được tiện ích (hãy tải lại trang HIS)." }); }
+    });
+  }
+
+  // One lookup at a time: the portal has one form. BHYT_RESULT is matched to it by case number.
+  let scanBhytPending = null;
+  chrome.runtime.onMessage.addListener(message => {
+    if (!message || message.type !== "BHYT_RESULT" || !scanBhytPending) return;
+    const result = message.result || {};
+    const requested = result.requestedPatient || message.requestedPatient || {};
+    if (scanBhytNorm(requested.caseNo) !== scanBhytNorm(scanBhytPending.caseNo)) return;
+    scanBhytPending.done = { ok: true, result };
+  });
+  async function scanBhytLookup(patient) {
+    if (scanBhytPending) scanBhytPending.done = scanBhytPending.done || { ok: false, message: "Đã bị thay bằng lượt tra cứu khác." };
+    const pending = { caseNo: patient.caseNo, done: null };
+    scanBhytPending = pending;
+    try {
+      chrome.runtime.sendMessage({ type: "BHYT_LOOKUP", patient, sourceCase: patient.caseNo }, response => {
+        if (pending.done) return;
+        if (chrome.runtime.lastError) pending.done = { ok: false, message: "Không kết nối được tiện ích (hãy tải lại trang HIS và trang cổng BHYT)." };
+        else if (!response || !response.ok) pending.done = { ok: false, message: (response && response.message) || "Cổng BHYT không phản hồi." };
+      });
+    } catch (_) {
+      pending.done = { ok: false, message: "Không kết nối được tiện ích (hãy tải lại trang HIS)." };
+    }
+    const t0 = Date.now();
+    while (!pending.done && !scanStopRequested && Date.now() - t0 < SCAN_BHYT_TIMEOUT_MS) await scanSleep(200);
+    if (scanBhytPending === pending) scanBhytPending = null;
+    return pending.done || { ok: false, message: scanStopRequested ? "Đã dừng." : `Cổng BHYT không trả kết quả trong ${SCAN_BHYT_TIMEOUT_MS / 1000} giây.` };
+  }
+
+  // One portal lookup per card + name + birth date per scan: a person's visits
+  // with the same card get the same portal reply. Failed lookups are not kept.
+  let scanBhytCache = new Map();
+  function scanBhytCachedLookup(patient) {
+    const key = [scanBhytNorm(patient.card), scanBhytNorm(patient.name), scanBhytDateOnly(patient.dob)].join("|");
+    let entry = scanBhytCache.get(key);
+    if (!entry) {
+      entry = scanBhytLookup(patient).then(res => {
+        const r = res && res.result;
+        if (!res.ok || !r || !r.resultFound || !r.responseMatchesPatient) scanBhytCache.delete(key);
+        return res;
+      });
+      scanBhytCache.set(key, entry);
+    }
+    return entry;
+  }
+
+  // The HIS details of this visit: from main.js (waits for them a little),
+  // else card / name / birth date read from the patient list row.
+  async function scanBhytPatient(info) {
+    const key = scanBhytNorm(info.caseNo);
+    const complete = p => p && scanBhytValidCard(p.card, p.caseNo) && p.name && p.dob;
+    // Started as soon as the visit opens, so allow HIS time to send its details.
+    const maxWait = info.bhyt ? 8000 : 2000;
+    for (let waited = 0; !scanStopRequested; waited += 200) {
+      const cached = key ? scanPatientByCase.get(key) : null;
+      if (complete(cached)) return { ...cached, dob: scanBhytDateOnly(cached.dob) };
+      if (waited >= maxWait) break;
+      await scanSleep(200);
+    }
+    const fallback = { caseNo: info.caseNo, card: scanBhytNorm(info.bhyt), name: info.name, dob: scanBhytDateOnly(info.dob) };
+    return complete(fallback) ? fallback : null;
+  }
+
+  // Lookup + comparison for one visit -> { errors, infos, rows }.
+  // rows: the "BHYT" table (field, HIS, cổng, đối chiếu, bad).
+  // visit.ready: set by QUÉT once HIS has finished loading this visit. The
+  // portal lookup starts before that, but TKNOICD must wait: it is asked with
+  // the case ids in HIS's hidden fields, which still hold the previous case's
+  // ids right after the click (NT.005 then answers for the wrong case).
+  async function scanBhytCheck(info, visit) {
+    const errors = [], infos = [], rows = [];
+    const date = info.visitDate || "";
+    const bad = (message, detail) => errors.push({ module: "BHYT", date, item: "", message, detail });
+    const note = (message, detail) => infos.push({ module: "BHYT", date, item: "", message, detail });
+    const patient = await scanBhytPatient(info);
+    if (scanStopRequested) return { errors, infos, rows };
+    if (!patient) {
+      if (info.bhyt) bad("Không đọc đủ mã thẻ / họ tên / ngày sinh của ca từ HIS nên chưa tra cứu cổng BHYT.");
+      else note("Không có mã thẻ BHYT trên HIS: không tra cứu cổng.");
+      return { errors, infos, rows };
+    }
+    const lookup = await scanBhytCachedLookup(patient);
+    if (!lookup.ok) {
+      bad(`Không tra cứu được cổng BHYT: ${lookup.message}`);
+      return { errors, infos, rows };
+    }
+    const data = lookup.result || {};
+    const his = patient;
+    if (!data.resultFound || !data.responseMatchesPatient) {
+      bad(data.staleResult
+        ? "Cổng chưa trả thông báo khớp mã thẻ đang tra: kiểm tra trực tiếp trên cổng."
+        : "Chưa xác định được kết quả của đúng mã thẻ đang tra: kiểm tra trực tiếp trên cổng.",
+        data.needsCaptcha ? "Cổng đang yêu cầu xác thực bổ sung." : "");
+      return { errors, infos, rows };
+    }
+    const row = (field, hisValue, portalValue, status = "", text = "") => {
+      rows.push({ field, his: String(hisValue || ""), portal: String(portalValue || ""),
+        result: text || (status === "good" ? "Khớp" : status === "bad" ? "Không khớp" : ""), bad: status === "bad", warn: status === "warn" });
+    };
+
+    // Card number.
+    const portalCard = data.card || "";
+    const cardOk = !portalCard || scanBhytNorm(portalCard) === scanBhytNorm(his.card);
+    row("Mã thẻ", his.card, portalCard || "không đọc được", portalCard ? (cardOk ? "good" : "bad") : "warn");
+    if (!cardOk) bad(`Mã thẻ HIS ${his.card} khác mã thẻ trên cổng ${portalCard}.`);
+
+    // Name.
+    if (data.name) {
+      const ok = scanBhytNorm(data.name) === scanBhytNorm(his.name);
+      row("Họ tên", his.name, data.name, ok ? "good" : "bad");
+      if (!ok) bad(`Họ tên HIS "${his.name}" khác họ tên trên cổng "${data.name}".`);
+    } else row("Họ tên", his.name, "không đọc được", "warn");
+
+    // Birth date.
+    const birth = scanBhytCompareBirth(his.dob, data.dob);
+    row("Ngày sinh", his.dob, data.dob || "không đọc được", birth.status, birth.text);
+    if (birth.status === "bad") bad(`Ngày sinh HIS ${his.dob} khác ngày sinh trên cổng ${data.dob}: ${birth.text.toLowerCase()}.`);
+
+    // Gender.
+    if (his.gender && data.gender) {
+      const g = v => scanBhytNorm(v).replace(/^(1|NAM)$/, "NAM").replace(/^(2|NU)$/, "NU");
+      const ok = g(his.gender) === g(data.gender);
+      row("Giới tính", his.gender, data.gender, ok ? "good" : "bad");
+      if (!ok) bad(`Giới tính HIS "${his.gender}" khác giới tính trên cổng "${data.gender}".`);
+    } else row("Giới tính", his.gender, data.gender || "không có trong thông báo");
+
+    // Nơi ĐK KCB BĐ: MA_KCBBD ("(6) Mã" on the bill) from the HIS patient list
+    // (ajaxExecuteQueryPaging), by case number or card number, vs the portal's
+    // "Nơi KCBBĐ". TKNOICD is not used: it is the transfer-from facility ("Mã
+    // CSKCB nơi người bệnh đến") and is only set for transferred patients.
+    // The portal may show a code with its name ("94001 - ..."), so a code found
+    // inside the other value also counts as a match.
+    const hisKcbbd = () => scanKcbbdByKey.get(scanBhytNorm(info.caseNo)) ||
+      scanKcbbdByKey.get(scanBhytNorm(his.caseNo)) ||
+      (his.patientId ? scanKcbbdByKey.get("BN:" + scanBhytNorm(his.patientId)) : "") ||
+      scanKcbbdByKey.get(scanKcbbdCardKey(his.card)) ||
+      his.registrationFacility || "";
+    // main.js keeps every MA_KCBBD it saw (the list may load before this script);
+    // for a patient it has not seen, it reads the patient list again once.
+    const kcbbdCase = scanBhytNorm(info.caseNo || his.caseNo);
+    scanKcbbdStatus.delete(kcbbdCase);
+    if (!hisKcbbd()) window.postMessage({ __scanMsgV1: true, type: "KCBBD_ASK",
+      want: { caseNo: info.caseNo || his.caseNo || "", patientId: his.patientId || "", card: his.card || "" } }, "*");
+    while (visit && !visit.ready && !scanStopRequested) await scanSleep(100);
+    for (let waited = 0; !hisKcbbd() && !scanKcbbdStatus.has(kcbbdCase) && waited < 16000 && !scanStopRequested; waited += 200) await scanSleep(200);
+    const hisFacility = hisKcbbd();
+    const kcbbdMiss = (() => {
+      const st = scanKcbbdStatus.get(kcbbdCase);
+      if (st && st.status === "noList") return "chưa đọc được MA_KCBBD: HIS chưa tải danh sách bệnh nhân từ khi mở trang (bấm Tìm kiếm trên danh sách rồi quét lại)";
+      if (st && st.status === "notInList") return `chưa đọc được MA_KCBBD: danh sách bệnh nhân (${st.listRows} dòng) không có bệnh nhân này hoặc MA_KCBBD trống`;
+      return "chưa đọc được MA_KCBBD (mở lại danh sách bệnh nhân trên HIS)";
+    })();
+    if (hisFacility && data.registrationFacility) {
+      const a = scanBhytNorm(hisFacility), b = scanBhytNorm(data.registrationFacility);
+      const shorter = a.length <= b.length ? a : b, longer = shorter === a ? b : a;
+      const ok = a === b || (shorter.length >= 5 && longer.includes(shorter));
+      row("Nơi ĐK KCB BĐ (MA_KCBBD)", hisFacility, data.registrationFacility, ok ? "good" : "bad");
+      if (!ok) bad(`Nơi đăng ký KCB ban đầu HIS (MA_KCBBD) ${hisFacility} khác trên cổng ${data.registrationFacility}.`);
+    } else {
+      row("Nơi ĐK KCB BĐ (MA_KCBBD)", hisFacility || kcbbdMiss,
+        data.registrationFacility || "không có trong thông báo", "warn", "Chưa đủ dữ liệu");
+    }
+
+    // KV/K (HIS field DT_SINHSONG).
+    if (data.kv) {
+      const ok = !!his.kv && scanBhytNorm(his.kv) === scanBhytNorm(data.kv);
+      row("KV/K", his.kv, data.kv, his.kv ? (ok ? "good" : "warn") : "", his.kv && !ok ? "Khác" : "");
+      if (his.kv && !ok) note(`KV/K trên cổng ${data.kv} khác HIS (DT_SINHSONG) ${his.kv}.`);
+    } else {
+      row("KV/K", his.kv, "không hiển thị", his.kv ? "bad" : "", his.kv ? "Cổng không có" : "");
+      if (his.kv) bad(`HIS có KV/K ${his.kv} nhưng cổng không hiển thị KV/K: cần kiểm tra.`);
+    }
+
+    // Card validity: HIS THOIGIAN vs portal.
+    const hisPeriod = his.cardValidityPeriod || [his.hisCardStart, his.hisCardExpiry].filter(Boolean).join(" – ");
+    const portalPeriod = [data.cardStart, data.cardExpiry].filter(Boolean).join(" – ");
+    if (his.hisCardStart && his.hisCardExpiry && data.cardStart && data.cardExpiry) {
+      const ok = scanBhytDateOnly(his.hisCardStart) === scanBhytDateOnly(data.cardStart) &&
+        scanBhytDateOnly(his.hisCardExpiry) === scanBhytDateOnly(data.cardExpiry);
+      row("Thời hạn thẻ", hisPeriod, portalPeriod, ok ? "good" : "bad");
+      if (!ok) bad(`Thời hạn thẻ HIS ${his.hisCardStart} – ${his.hisCardExpiry} khác trên cổng ${data.cardStart} – ${data.cardExpiry}.`);
+    } else {
+      row("Thời hạn thẻ", hisPeriod || "không đọc được", portalPeriod || "không đọc được", "warn", "Chưa đủ dữ liệu");
+    }
+    // Expiry as of today (the portal's message): information only, since a
+    // past visit's card may have expired after discharge.
+    if (["expired", "today", "soon"].includes(String(data.expiryStatus || "")) && data.expiryMessage) {
+      note(`Hạn thẻ: ${data.expiryMessage}.`);
+    }
+
+    // Two cards in the notice (old + newly issued).
+    const twoCards = !!(data.mainCard && data.mainCard.card && data.newCard && data.newCard.card &&
+      scanBhytNorm(data.mainCard.card) !== scanBhytNorm(data.newCard.card));
+    if (data.newCard && data.newCard.card) {
+      const nc = data.newCard;
+      row("Mã thẻ mới", "", `${nc.card}${nc.start || nc.expiry ? ` (${nc.start || "?"} – ${nc.expiry || "?"})` : ""}`, "warn", "Cổng báo thẻ mới");
+      note(`Cổng báo chủ thẻ đã được cấp mã thẻ mới ${nc.card}` +
+        (nc.start || nc.expiry ? `, hạn ${nc.start || "?"} – ${nc.expiry || "?"}` : "") +
+        (nc.facilityCode ? `, KCB BĐ ${nc.facilityCode}` : "") + ".",
+        twoCards ? `Thẻ trong thông báo chính: ${data.mainCard.card} (${data.mainCard.start || "?"} – ${data.mainCard.expiry || "?"}).` : "");
+    }
+    const admit = scanBhytDay(his.admissionDate), discharge = scanBhytDay(his.dischargeDate);
+    if (twoCards && admit !== null && discharge !== null) {
+      const oldStart = scanBhytDay(data.mainCard.start), oldEnd = scanBhytDay(data.mainCard.expiry);
+      const newStart = scanBhytDay(data.newCard.start), newEnd = scanBhytDay(data.newCard.expiry);
+      const inRange = (d, s, e) => d !== null && s !== null && e !== null && d >= s && d <= e;
+      if (admit <= discharge && newStart !== null && admit < newStart && discharge >= newStart &&
+          inRange(admit, oldStart, oldEnd) && inRange(discharge, newStart, newEnd)) {
+        bad(`Đợt điều trị vắt qua thời điểm đổi thẻ: vào viện ${his.admissionDate} thuộc thẻ cũ ${data.mainCard.card}, ra viện ${his.dischargeDate} thuộc thẻ mới ${data.newCard.card}. HIS cần ghi nhận đủ cả 2 mã thẻ.`,
+          `Thẻ cũ ${data.mainCard.card}: ${data.mainCard.start} – ${data.mainCard.expiry}\nThẻ mới ${data.newCard.card}: ${data.newCard.start} – ${data.newCard.expiry}\nHIS trả về mã ${his.card}.`);
+      }
+    } else if (twoCards) {
+      note("Cổng báo 2 mã thẻ nhưng HIS chưa có đủ ngày vào / ra viện để biết đợt điều trị có vắt qua thời điểm đổi thẻ không.");
+    }
+    // One card only: admitted before its validity, discharged within it -> the old card may be missing.
+    if (!twoCards && admit !== null && discharge !== null && data.cardStart && data.cardExpiry) {
+      const start = scanBhytDay(data.cardStart), end = scanBhytDay(data.cardExpiry);
+      if (cardOk && start !== null && end !== null && admit < start && discharge >= start && discharge <= end) {
+        bad(`Có thể thiếu mã thẻ cũ: vào viện ${his.admissionDate} trước hạn thẻ hiện tại (${data.cardStart} – ${data.cardExpiry}), ra viện ${his.dischargeDate} trong hạn. Kiểm tra lịch sử thẻ trên cổng.`);
+      }
+    }
+    if (data.needsCaptcha) note("Cổng yêu cầu xác thực bổ sung: cần thao tác thủ công.");
+    return { errors, infos, rows };
   }
 
   // ---- QUÉT THEO BHYT ----
@@ -3743,6 +4156,20 @@
   function scanLooseText(value) {
     return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "d")
       .toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+  // Address key for matching visits: same as scanLooseText, but each part
+  // ("Ấp Tân Mỹ-Xã Mỹ Hương-Thành phố Cần Thơ") loses its unit word (ấp, xã,
+  // thành phố…), so "Tân mỹ-Xã…" and "Ấp Tân Mỹ-Xã…" give the same key.
+  const SCAN_ADDRESS_UNIT = /^(?:khu pho|khu vuc|thi tran|thi xa|thanh pho|ap|khom|kp|to|thon|xom|ban|buon|soc|xa|phuong|quan|huyen|tinh|tp)\b[\s.]*/;
+  function scanAddressKey(value) {
+    return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "d")
+      .toLowerCase().split(/[-,;/]/)
+      .map(part => {
+        const p = part.replace(/\s+/g, " ").trim();
+        const stripped = p.replace(SCAN_ADDRESS_UNIT, "");
+        return (stripped || p).replace(/[^a-z0-9]/g, "");
+      })
+      .filter(Boolean).join("|");
   }
   function scanGridSignature() {
     const grid = document.getElementById("grdLS");
@@ -3816,7 +4243,7 @@
     return box;
   }
   async function scanByBhyt(input) {
-    if (scanRunning) return;
+    if (scanRunning || !scanTabXn.checked) return;
     const raw = String(input || "").replace(/\s+/g, "").toUpperCase();
     // HIS finds the patient only with the full card number (e.g.
     // LH292094139001574); the last 10 characters are kept to match rows and as
@@ -3851,7 +4278,7 @@
       if (!name || !birthYear) throw new Error("Không đọc được họ tên / năm sinh trong kết quả tìm theo BHYT.");
       // Every address seen with this card (all the same person).
       const addresses = new Map();
-      for (const r of cardRows) if (scanLooseText(r.address)) addresses.set(scanLooseText(r.address), r.address);
+      for (const r of cardRows) if (scanAddressKey(r.address)) addresses.set(scanAddressKey(r.address), r.address);
       if (!addresses.size) throw new Error("Không đọc được địa chỉ (cột DIACHI) trong kết quả tìm theo BHYT.");
       lookup = { code: raw, name, birthYear, addresses: [...addresses.values()] };
       // (2) name + birth year -> everyone with them.
@@ -3861,9 +4288,9 @@
       scanStatus.textContent = "Bước 3/3: lọc theo địa chỉ…";
       const nameKey = scanLooseText(name);
       const sameName = second.rows.filter(r => scanLooseText(r.name) === nameKey && r.birthYear === birthYear);
-      toScan = sameName.filter(r => addresses.has(scanLooseText(r.address)));
+      toScan = sameName.filter(r => addresses.has(scanAddressKey(r.address)));
       Object.assign(lookup, { found: sameName.length, matched: toScan.length, missing: second.missing,
-        excluded: sameName.filter(r => !addresses.has(scanLooseText(r.address)))
+        excluded: sameName.filter(r => !addresses.has(scanAddressKey(r.address)))
           .map(r => ({ caseNo: r.caseNo, visitDate: r.visitDate, address: r.address })) });
       if (!toScan.length) throw new Error("Không có lần vào viện nào cùng họ tên, năm sinh và địa chỉ.");
     } catch (err) {
@@ -3871,7 +4298,7 @@
       toScan = [];
     }
     scanRunning = false;
-    scanStartBtn.disabled = false; scanBhytBtn.disabled = false; scanStopBtn.disabled = true;
+    scanStartBtn.disabled = false; scanStopBtn.disabled = true; scanSyncBhytRow();
     if (!toScan.length) { scanLookup = lookup; scanRenderResults(); return; }
     // One person: every visit shares one identity for the Bộ mỡ / HbA1C rules.
     await scanAllPatients({ patients: toScan, personKey: `BHYT-PERSON:${code}`, lookup });
@@ -3906,8 +4333,17 @@
       scanResults = []; scanRenderResults();
       return;
     }
+    const scanned = { xn: scanTabXn.checked, thuoc: scanTabThuoc.checked, pttt: scanTabPttt.checked, bhyt: scanTabBhyt.checked };
+    if (scanned.bhyt) {
+      const ping = await scanBhytPing();
+      if (!ping.ok) {
+        scanStatus.textContent = ping.error || "Đã bật BHYT nhưng chưa thấy trang cổng giám định BHYT (Thông tuyến khám chữa bệnh) đang mở. Hãy mở và đăng nhập trang đó trong một tab khác rồi quét lại, hoặc tắt BHYT.";
+        return;
+      }
+    }
+    if (scanRunning) return;
     scanRunning = true; scanStopRequested = false; scanResults = []; scanSummaryPrefix = "";
-    const scanned = { xn: scanTabXn.checked, thuoc: scanTabThuoc.checked, pttt: scanTabPttt.checked };
+    scanBhytCache = new Map();
     // While scanning, also open phiếu lists whose tab is not on screen.
     scanMainCall({ action: "setScanMode", value: true, kinds: { dvkt: scanTabXn.checked || scanTabThuoc.checked || scanTabPttt.checked, drug: scanTabThuoc.checked, lab: scanTabXn.checked } });
     scanStartBtn.disabled = true; scanBhytBtn.disabled = true; scanStopBtn.disabled = false;
@@ -3948,9 +4384,15 @@
         const selection = await scanSelectPatient(scanResolveRow(info) || row, info, previousKey, alreadySelected);
         if (scanStopRequested) break;
         let findings;
+        let bhytResult = null;
         if (!selection.switched) {
           findings = { errors: [{ module: "Hệ thống", item: "", message: `Không mở được ca: ${selection.error || "không rõ lý do"}` }], counts: { dvkt: 0, drug: 0, services: 0 } };
         } else {
+          // BHYT portal lookup runs in the other tab while HIS loads and the
+          // tabs are walked (it waits for this visit's card details itself).
+          const visit = { ready: false };
+          const bhytCheck = scanned.bhyt ? scanBhytCheck(info, visit).catch(err => ({
+            errors: [{ module: "BHYT", date: info.visitDate || "", item: "", message: `Không kiểm tra được BHYT: ${err && err.message || err}` }], infos: [], rows: [] })) : null;
           // HIS may not reload a visit that was already selected, so its phiếu
           // lists would never arrive and never be opened. Open the lists HIS
           // already sent for it (selecting by hand no longer auto-opens them).
@@ -3959,9 +4401,14 @@
             scanLastDataAt = Date.now();
           }
           await scanWaitForPatient();
+          visit.ready = true;
           // HIS loads the Xét nghiệm / Thuốc phiếu lists only when their tab is
           // opened: open each tab so its phiếu are walked too.
           if (scanAnyDataTab()) await scanOpenDataTabs(info, patients.length);
+          if (bhytCheck) {
+            if (!scanStopRequested) scanStatus.textContent = `Đang quét ${info.index + 1}/${patients.length}: ${info.label} · chờ cổng BHYT…`;
+            bhytResult = await bhytCheck;
+          }
           if (scanStopRequested) break;
           // NT.005.HSBA can arrive after the phiếu lists; wait up to 3 s for it
           // when the case has a drug that needs a diagnosis check.
@@ -3970,9 +4417,11 @@
           try { findings = scanCollectFindings(info, scanned); }
           catch (err) { findings = { errors: [{ module: "Hệ thống", item: "", message: `Không kiểm tra được: ${err && err.message || err}` }], counts: { dvkt: 0, drug: 0, services: 0 } }; }
         }
+        const baseErrors = [...findings.errors, ...(bhytResult ? bhytResult.errors : [])];
         scanResults.push({ index: info.index, label: info.label, caseNo: info.caseNo, rowId: info.rowId, row: info.row,
           patientKey: info.patientKey, visitDate: info.visitDate, scanned, lists: scanVisitLists.slice(), tabs: scanVisitTabs.slice(), ...findings,
-          baseErrors: findings.errors, repeatTests: findings.repeatTests || [] });
+          errors: baseErrors, baseErrors, baseInfos: bhytResult ? bhytResult.infos : [], bhytRows: bhytResult ? bhytResult.rows : null,
+          repeatTests: findings.repeatTests || [] });
         scanApplyRepeatTestRules();
         scanRenderResults();
       }
@@ -3982,7 +4431,7 @@
       scanRunning = false;
       scanForcedEncounter = "";
       scanMainCall({ action: "setScanMode", value: false });
-      scanStartBtn.disabled = false; scanBhytBtn.disabled = false; scanStopBtn.disabled = true;
+      scanStartBtn.disabled = false; scanStopBtn.disabled = true; scanSyncBhytRow();
       // Back to the patient list, then to the patient selected before the scan.
       if (scanAnyDataTab()) {
         const listTab = scanFindHisTab(SCAN_LIST_TAB);

@@ -1,10 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Scan",
-  "version": "1.0.1",
-  "description": "QUÉT bệnh nhân trên HIS: xét nghiệm, thuốc, PTTT, thiếu chẩn đoán, xét nghiệm lặp lại.",
+  "version": "1.0.2",
+  "description": "QUÉT bệnh nhân trên HIS: xét nghiệm, thuốc, PTTT, BHYT, thiếu chẩn đoán, xét nghiệm lặp lại.",
+  "permissions": [
+    "tabs"
+  ],
   "host_permissions": [
-    "https://bvdksoctrang.vncare.vn/*"
+    "https://bvdksoctrang.vncare.vn/*",
+    "https://gdbhyt.baohiemxahoi.gov.vn/*"
   ],
   "content_scripts": [
     {
@@ -26,6 +30,18 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://gdbhyt.baohiemxahoi.gov.vn/ThongTuyenLSKCB/Index*"
+      ],
+      "js": [
+        "bhyt_portal.js"
+      ],
+      "run_at": "document_idle"
     }
-  ]
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  }
 }

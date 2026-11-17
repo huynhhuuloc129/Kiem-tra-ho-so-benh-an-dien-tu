@@ -1,6 +1,90 @@
 (() => {
-  if (window.__hisTimeHelperHookedV31) return;
-  window.__hisTimeHelperHookedV31 = true;
+  if (window.__scanMainHookedV1) {
+    // Should not happen: Scan has its own guard, separate from the old extension.
+    try { console.warn("[Scan] main.js bị nạp hai lần, bỏ qua bản sau."); } catch (_) {}
+    return;
+  }
+  window.__scanMainHookedV1 = true;
+  try { console.info("[Scan] main.js đã chạy (bản có MA_KCBBD)."); } catch (_) {}
+
+  // ---- Keep QUÉT running while the user is on another tab or app ----
+  // A hidden page's timers are throttled by Chrome (aligned to 1 s, then to
+  // 1 per minute after 5 min). Our own waits already sleep through a Worker,
+  // but HIS's own code (jQuery, jqGrid, tab loading) also runs on setTimeout,
+  // so while QUÉT runs in a hidden tab the page's timers are moved into a
+  // Worker, whose timers are not throttled. Visible tab or no scan: native.
+  let hthKeepAwake = false;
+  const hthTimerShim = (() => {
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeSetInterval = window.setInterval.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    const nativeClearInterval = window.clearInterval.bind(window);
+    let worker = null;
+    try {
+      const src = "const t={};onmessage=e=>{const d=e.data;if(d.clear){clearTimeout(t[d.id]);clearInterval(t[d.id]);delete t[d.id];return;}" +
+        "t[d.id]=d.repeat?setInterval(()=>postMessage(d.id),d.ms):setTimeout(()=>{delete t[d.id];postMessage(d.id);},d.ms);}";
+      worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+    } catch (_) { worker = null; }
+    if (!worker) return null;
+    // Ids far above Chrome's native timer ids so the two never collide.
+    let seq = 1500000000;
+    const timers = new Map();
+    worker.onmessage = e => {
+      const timer = timers.get(e.data);
+      if (!timer) return;
+      if (!timer.repeat) timers.delete(e.data);
+      timer.fn.apply(window, timer.args);
+    };
+    worker.onerror = () => { worker = null; };
+    const useWorker = (fn) => worker && hthKeepAwake && typeof fn === "function" && document.visibilityState === "hidden";
+    const schedule = (repeat, fn, ms, args) => {
+      const id = ++seq;
+      timers.set(id, { fn, args, repeat });
+      try { worker.postMessage({ id, ms: Math.max(0, Number(ms) || 0), repeat }); }
+      catch (_) { timers.delete(id); return null; }
+      return id;
+    };
+    const clear = (id, nativeClear) => {
+      if (timers.has(id)) {
+        timers.delete(id);
+        try { if (worker) worker.postMessage({ id, clear: true }); } catch (_) {}
+        return;
+      }
+      nativeClear(id);
+    };
+    window.setTimeout = function(fn, ms, ...args) {
+      if (useWorker(fn)) { const id = schedule(false, fn, ms, args); if (id !== null) return id; }
+      return nativeSetTimeout(fn, ms, ...args);
+    };
+    window.setInterval = function(fn, ms, ...args) {
+      if (useWorker(fn)) { const id = schedule(true, fn, ms, args); if (id !== null) return id; }
+      return nativeSetInterval(fn, ms, ...args);
+    };
+    window.clearTimeout = function(id) { clear(id, nativeClearTimeout); };
+    window.clearInterval = function(id) { clear(id, nativeClearInterval); };
+    return true;
+  })();
+  // A page holding a Web Lock is not frozen by Chrome while it is in the background.
+  let hthReleaseKeepAwakeLock = null;
+  let hthKeepAwakeLockPending = false;
+  function hthSetKeepAwake(on) {
+    hthKeepAwake = !!on;
+    if (on && !hthReleaseKeepAwakeLock && !hthKeepAwakeLockPending && navigator.locks && navigator.locks.request) {
+      hthKeepAwakeLockPending = true;
+      try {
+        navigator.locks.request("scan-quet-keep-awake", () => new Promise(resolve => {
+          hthKeepAwakeLockPending = false;
+          // Scan already stopped while the lock was being granted.
+          if (!hthKeepAwake) { resolve(); return; }
+          hthReleaseKeepAwakeLock = resolve;
+        })).catch(() => { hthKeepAwakeLockPending = false; });
+      } catch (_) { hthKeepAwakeLockPending = false; }
+    } else if (!on && hthReleaseKeepAwakeLock) {
+      hthReleaseKeepAwakeLock();
+      hthReleaseKeepAwakeLock = null;
+    }
+  }
+  void hthTimerShim;
 
   const normalizeKey = key => String(key || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   const startAliases = [
@@ -241,7 +325,7 @@
     ...startAliases, ...endAliases, ...codeAliases, ...nameAliases,
     ...quantityAliases, ...expectedAliases, ...caseAliases, ...groupAliases, ...rowAliases,
     "MABENHNHAN", "MABHYT", "MABYT", "TENBENHNHAN", "NGAYSINH", "NGAYSINHBN", "NGAYSINH_BN", "NAMSINH", "NAM_SINH", "NAMSINHBN", "NAMSINH_BN", "GIOITINH",
-    "DT_SINHSONG", "MA_DKBD", "THOIGIAN", "THOIGIANVAOVIEN", "THOIGIANRAVIEN",
+    "DT_SINHSONG", "MA_DKBD", "TKNOICD", "THOIGIAN", "THOIGIANVAOVIEN", "THOIGIANRAVIEN",
     "NGAYVAOVIEN", "NGAYRAVIEN", "NGAYHOSORAVIEN", "NGAYVAODT", "NGAYRADT",
     "NGAY_VAO_DT", "NGAY_RA_DT", "MADMBYT", "MA_DVKT_BHYT", "MA_DICH_VU_BHYT", "MA_THUOC", "MA_THUOC_BHYT", "MATHUOCBHYT",
     "NHAPXUATCTID", "DICHVUTHUCHIENID", "KETQUACLSID", "NDHL", "DUONGDUNG",
@@ -317,6 +401,124 @@
     return m ? `${m[1].padStart(2, "0")}/${m[2].padStart(2, "0")}/${m[3]}` : normalizeBirthDate(value);
   }
 
+  // MA_KCBBD (registered primary-care facility, "(6) Mã" on the bill) comes in
+  // the ajaxExecuteQueryPaging patient list, one row per patient, as soon as the
+  // list loads. It is read here straight from the response text: the general
+  // queue below filters, drops and keeps only the first patient. Codes are kept
+  // so content.js (which loads later) can ask for them again ("KCBBD_ASK").
+  const kcbbdStore = new Map();
+  let kcbbdLoggedKeys = false;
+  // The last HIS request whose response carried MA_KCBBD (the patient list),
+  // re-sent when QUÉT reaches a patient whose code was not seen.
+  let kcbbdListTemplate = null;
+  let kcbbdListRows = 0;
+  function hthCaptureKcbbd(text, request) {
+    if (!text || !/MA_KCBBD/i.test(text)) return 0;
+    let data;
+    try { data = JSON.parse(text); } catch (err) {
+      try { console.warn("[Scan] MA_KCBBD: phản hồi không phải JSON (%s). Đầu phản hồi:", err && err.message, String(text).slice(0, 300)); } catch (_) {}
+      return 0;
+    }
+    const rows = [];
+    const walk = (v, depth) => {
+      if (v === null || v === undefined || depth > 8) return;
+      if (typeof v === "string") {
+        const t = v.trim();
+        if (t.length > 1 && (t[0] === "[" || t[0] === "{") && /MA_KCBBD/i.test(t)) {
+          try { walk(JSON.parse(t), depth + 1); } catch (_) {}
+        }
+        return;
+      }
+      if (typeof v !== "object") return;
+      if (Array.isArray(v)) { for (const item of v) walk(item, depth + 1); return; }
+      if (Object.keys(v).some(k => normalizeKey(k) === normalizeKey("MA_KCBBD"))) rows.push(v);
+      for (const k of Object.keys(v)) walk(v[k], depth + 1);
+    };
+    walk(data, 0);
+    const facilities = [];
+    for (const r of rows) {
+      const code = String(pickField(r, ["MA_KCBBD"].map(normalizeKey)) || "").trim();
+      if (!code) continue;
+      const caseNo = String(pickField(r, ["MAHOSOBENHAN", "MA_BA", "MAHOSOBENAN", "SO_BENH_AN"].map(normalizeKey)) || "").trim();
+      const patientId = String(pickField(r, ["MABENHNHAN", "MA_BN", "MABENHNHANID"].map(normalizeKey)) || "").trim();
+      let card = String(pickField(r, ["MABHYT", "MA_THE_BHYT", "MATHEBHYT", "MA_BHYT", "SOTHEBHYT", "SOTHE", "MATHE"].map(normalizeKey)) || "").trim();
+      // Unknown card field name in this list: take any value shaped like a card.
+      if (!card) card = String(Object.values(r).find(v => /^[A-Z]{2}\d{10,13}$/.test(String(v || "").trim())) || "").trim();
+      if (!caseNo && !patientId && !card) continue;
+      const f = { caseNo, patientId, card, code };
+      kcbbdStore.set([caseNo, patientId, card].join("|"), f);
+      facilities.push(f);
+    }
+    while (kcbbdStore.size > 2000) kcbbdStore.delete(kcbbdStore.keys().next().value);
+    if (!rows.length) {
+      try { console.warn("[Scan] MA_KCBBD: có trong phản hồi nhưng không tìm được dòng nào. Đầu phản hồi:", String(text).slice(0, 300)); } catch (_) {}
+    }
+    if (!kcbbdLoggedKeys && rows.length) {
+      kcbbdLoggedKeys = true;
+      try { console.info("[Scan] MA_KCBBD: %d dòng, đọc được %d. Các trường của dòng đầu:", rows.length, facilities.length, Object.keys(rows[0]).join(", ")); } catch (_) {}
+    }
+    if (facilities.length) {
+      kcbbdListRows = rows.length;
+      if (request && request.url) kcbbdListTemplate = { url: String(request.url), method: String(request.method || "GET"), body: String(request.body || ""), headers: Array.isArray(request.headers) ? request.headers.slice() : [] };
+      window.postMessage({ __scanMsgV1: true, type: "KCBBD", facilities }, "*");
+    }
+    return facilities.length;
+  }
+  function kcbbdFind(want) {
+    const n = v => normalizeKey(v);
+    const caseNo = n(want && want.caseNo), patientId = n(want && want.patientId);
+    const card = n(want && want.card).slice(-10);
+    for (const f of kcbbdStore.values()) {
+      if ((caseNo && n(f.caseNo) === caseNo) || (patientId && n(f.patientId) === patientId) ||
+          (card.length === 10 && n(f.card).slice(-10) === card)) return f;
+    }
+    return null;
+  }
+  // Re-send the patient-list request (first page, up to 500 rows) with the
+  // native XHR methods, so the capture hooks do not see it twice.
+  let kcbbdRefetch = null;
+  let kcbbdRefetchAt = 0;
+  function kcbbdRefetchList() {
+    if (kcbbdRefetch) return kcbbdRefetch;
+    const t = kcbbdListTemplate;
+    if (!t || Date.now() - kcbbdRefetchAt < 15000) return Promise.resolve(false);
+    kcbbdRefetchAt = Date.now();
+    let url = t.url, body = t.body;
+    try { const u = new URL(url, location.href); if (u.search) { hthAdjustPaging(u.searchParams); url = u.toString(); } } catch (_) {}
+    if (body && !/^\s*[{[]/.test(body)) {
+      try { const form = new URLSearchParams(body); hthAdjustPaging(form); body = form.toString(); } catch (_) {}
+    }
+    kcbbdRefetch = new Promise(resolve => {
+      try {
+        const xhr = new XMLHttpRequest();
+        originalOpen.call(xhr, t.method, url, true);
+        for (const [name, value] of t.headers) { try { originalSetRequestHeader.call(xhr, name, value); } catch (_) {} }
+        xhr.timeout = 15000;
+        xhr.onload = () => { try { resolve(xhr.status >= 200 && xhr.status < 300 && hthCaptureKcbbd(xhr.responseText, t) > 0); } catch (_) { resolve(false); } };
+        xhr.onerror = xhr.ontimeout = () => resolve(false);
+        originalSend.call(xhr, /^GET$/i.test(t.method) ? null : body);
+      } catch (_) { resolve(false); }
+    }).finally(() => { kcbbdRefetch = null; });
+    return kcbbdRefetch;
+  }
+  // KCBBD_ASK: send every code kept. With `want` (one patient), also report
+  // whether it was found, re-reading the patient list once if it was not.
+  window.addEventListener("message", event => {
+    if (event.source !== window || !event.data || event.data.__scanMsgV1 !== true || event.data.type !== "KCBBD_ASK") return;
+    if (kcbbdStore.size) window.postMessage({ __scanMsgV1: true, type: "KCBBD", facilities: Array.from(kcbbdStore.values()) }, "*");
+    const want = event.data.want;
+    if (!want) return;
+    const reply = (status, f) => window.postMessage({ __scanMsgV1: true, type: "KCBBD_STATUS", caseNo: String(want.caseNo || ""), status,
+      listRows: kcbbdListRows, facilities: f ? [f] : [] }, "*");
+    const hit = kcbbdFind(want);
+    if (hit) { reply("found", hit); return; }
+    if (!kcbbdListTemplate) { reply("noList"); return; }
+    kcbbdRefetchList().then(() => {
+      const again = kcbbdFind(want);
+      reply(again ? "found" : "notInList", again);
+    });
+  });
+
   function extractPatient(records, url) {
     if (url && !String(url).toLowerCase().includes("restservice")) return;
     if (!Array.isArray(records) || !records.length) return;
@@ -329,16 +531,18 @@
       const dob = normalizeBirthDate(pickField(r, ["NGAYSINH", "NGAY_SINH", "NGAYSINHBN"].map(normalizeKey)));
       const kv = String(pickField(r, ["DT_SINHSONG", "KV", "MAKV", "KHU_VUC", "DANTOC_KV"].map(normalizeKey)) || "").trim();
       const gender = String(pickField(r, ["GIOITINH", "GIOI_TINH", "PHAI", "GENDER", "SEX"].map(normalizeKey)) || "").trim();
-      const registrationFacility = String(pickField(r, ["MA_DKBD", "MADKBD", "NOIKCBBD", "NOI_DANG_KY_KCB_BAN_DAU", "MA_CSKCB_BD", "MACSKCBBD", "NOIDANGKYKCBBD", "TENNOIDKBD", "TEN_CSKCB_DKBD"].map(normalizeKey)) || "").trim();
+      const registrationFacility = String(pickField(r, ["MA_KCBBD", "MA_DKBD", "MADKBD", "NOIKCBBD", "NOI_DANG_KY_KCB_BAN_DAU", "MA_CSKCB_BD", "MACSKCBBD", "NOIDANGKYKCBBD", "TENNOIDKBD", "TEN_CSKCB_DKBD"].map(normalizeKey)) || "").trim();
+      // TKNOICD (NT.005): the HIS "Nơi KCBBĐ" code, compared with the BHYT portal in QUÉT.
+      const tkNoiCd = String(pickField(r, ["TKNOICD"].map(normalizeKey)) || "").trim();
       const cardValidity = parseCardValidityPeriod(pickField(r, ["THOIGIAN", "THOI_GIAN", "THOIGIANTHE", "THOIHANBHYT", "THOIGIANBHYT"].map(normalizeKey)));
       const admissionDate = normalizeDateOnly(pickField(r, ["THOIGIANVAOVIEN", "THOIGIAN_VAO_VIEN", "NGAYVAOVIEN", "NGAY_VAO_VIEN", "NGAYVAO", "NGAY_VAO", "NGAYNHAPVIEN", "NGAY_NHAP_VIEN"].map(normalizeKey)));
       const dischargeDate = normalizeDateOnly(pickField(r, ["THOIGIANRAVIEN", "THOIGIAN_RA_VIEN", "NGAYRAVIEN", "NGAY_RA_VIEN", "NGAYRA", "NGAY_RA", "NGAYXUATVIEN", "NGAY_XUAT_VIEN"].map(normalizeKey)));
       if (!card || !name || !dob || (!caseNo && !patientId)) continue;
       window.postMessage({
-        __hisTimeHelperV31: true,
+        __scanMsgV1: true,
         type: "PATIENT",
         patient: {
-          caseNo, patientId, card, name, dob, kv, gender, registrationFacility,
+          caseNo, patientId, card, name, dob, kv, gender, registrationFacility, tkNoiCd,
           cardValidityPeriod: cardValidity.raw,
           hisCardStart: cardValidity.start,
           hisCardExpiry: cardValidity.end,
@@ -712,7 +916,7 @@
     };
     if (dvktRows.length || medicineRows.length || contrastServices.length || contrastMedicines.length || finalContext.admissionDate || finalContext.dischargeDate) {
       window.postMessage({
-        __hisTimeHelperV31: true, type: "AUDIT_DATA",
+        __scanMsgV1: true, type: "AUDIT_DATA",
         context: finalContext, dvktRows, medicineRows, contrastServices, contrastMedicines,
         capturedAt: Date.now()
       }, "*");
@@ -792,7 +996,7 @@
         seenOutput.add(key);
         outputRows.push(row);
       }
-      window.postMessage({__hisTimeHelperV31: true, type: "SERVICES", rows: outputRows}, "*");
+      window.postMessage({__scanMsgV1: true, type: "SERVICES", rows: outputRows}, "*");
     }
   }
 
@@ -922,7 +1126,7 @@
         status: get(r, "TRANGTHAIKETQUA")
       });
     }
-    window.postMessage({ __hisTimeHelperV31: true, type: "LAB_RESULTS", context: { key }, rows: out }, "*");
+    window.postMessage({ __scanMsgV1: true, type: "LAB_RESULTS", context: { key }, rows: out }, "*");
   }
 
   const originalFetch = window.fetch;
@@ -938,8 +1142,20 @@
         requestUrl = req && typeof req === "object" ? req.url : req;
       } catch (_) {}
       // Preserve the native fetch path for unrelated calls and background HIS tabs.
-      if (!isRestServiceUrl(requestUrl) || !hthCaptureActive()) {
-        return originalFetch.apply(this, args);
+      if (!isRestServiceUrl(requestUrl)) return originalFetch.apply(this, args);
+      if (!hthCaptureActive()) {
+        // Hidden tab: still note MA_KCBBD from the patient list, which HIS
+        // loads before QUÉT starts.
+        const init = args[1] || {};
+        const body = typeof init.body === "string" ? init.body : "";
+        if (!/ajaxExecuteQueryPaging/i.test(hthRequestText(requestUrl, body))) return originalFetch.apply(this, args);
+        return originalFetch.apply(this, args).then(res => {
+          try {
+            const headers = init.headers ? Array.from(new Headers(init.headers).entries()) : [];
+            res.clone().text().then(text => { try { hthCaptureKcbbd(text, { url: requestUrl, method: init.method || (body ? "POST" : "GET"), body, headers }); } catch (_) {} }).catch(() => {});
+          } catch (_) {}
+          return res;
+        });
       }
       const requestContext = readHISContext();
       const requestBody = args[1] && typeof args[1].body === "string" ? args[1].body : "";
@@ -957,6 +1173,11 @@
           res.clone().text().then(text => {
             if (!hthCaptureActive()) return;
             if (hisQueryName(requestUrl, requestBody) === HTH_LAB_RESULT_QUERY) hthPublishLabResults(text, requestContext);
+            try {
+              const init = args[1] || {};
+              const headers = init.headers ? Array.from(new Headers(init.headers).entries()) : [];
+              hthCaptureKcbbd(text, { url: requestUrl, method: init.method || (requestBody ? "POST" : "GET"), body: requestBody, headers });
+            } catch (_) {}
             hthInspectPhieuList(requestUrl, requestBody, text, requestContext);
             queueResponseText(text, requestUrl, requestContext, hisQueryName(requestUrl, requestBody));
           }).catch(() => {});
@@ -983,7 +1204,16 @@
     const url = String(this.__hthUrl || "");
     // Do not install a load listener on every ordinary HIS XHR. Only RestService
     // calls from the visible tab are candidates for helper capture.
-    if (!isRestServiceUrl(url) || !hthCaptureActive()) {
+    if (!isRestServiceUrl(url)) return originalSend.apply(this, args);
+    if (!hthCaptureActive()) {
+      // Hidden tab: still note MA_KCBBD from the patient list, which HIS
+      // loads before QUÉT starts.
+      const body = typeof args[0] === "string" ? args[0] : "";
+      if (/ajaxExecuteQueryPaging/i.test(hthRequestText(url, body))) {
+        this.addEventListener("load", function() {
+          try { if (this.status >= 200 && this.status < 300) hthCaptureKcbbd(this.responseText, { url, method: this.__hthMethod, body, headers: this.__hthHeaders }); } catch (_) {}
+        }, { once: true });
+      }
       return originalSend.apply(this, args);
     }
     const requestContext = readHISContext();
@@ -1002,6 +1232,7 @@
     this.addEventListener("load", function() {
       try {
         if (!hthCaptureActive()) return;
+        try { hthCaptureKcbbd(this.responseText, { url: this.__hthUrl, method: this.__hthMethod, body: requestBody, headers: this.__hthHeaders }); } catch (_) {}
         hthInspectPhieuList(this.__hthUrl, requestBody, this.responseText, requestContext);
         queueResponseText(this.responseText, this.__hthUrl, requestContext, hisQueryName(this.__hthUrl, requestBody));
       } catch (_) {}
@@ -1064,7 +1295,7 @@
     });
   }
   const hthSleep = hthMakeBackgroundSleep();
-  const hthEmit = payload => window.postMessage({ __hthWalkEvent: true, ...payload }, "*");
+  const hthEmit = payload => window.postMessage({ __scanWalkEventV1: true, ...payload }, "*");
 
   function hthRequestText(url, body) {
     let text = String(url || "") + " " + String(body || "");
@@ -1301,9 +1532,9 @@
   // Bridge for content.js (isolated world): patient selection through jqGrid,
   // phiếu walking, and the auto-walk setting.
   window.addEventListener("message", event => {
-    if (event.source !== window || !event.data || event.data.__hthScanRequest !== true) return;
+    if (event.source !== window || !event.data || event.data.__scanRequestV1 !== true) return;
     const { id, action, rowId } = event.data;
-    const reply = payload => window.postMessage({ __hthScanResponse: true, id, ...payload }, "*");
+    const reply = payload => window.postMessage({ __scanResponseV1: true, id, ...payload }, "*");
     try {
       if (action === "setAutoWalk") {
         hthAutoWalk = !!event.data.value;
@@ -1329,6 +1560,7 @@
       }
       if (action === "setScanMode") {
         hthScanMode = !!event.data.value;
+        hthSetKeepAwake(hthScanMode);
         hthScanWalked.clear();
         hthLabFetched.clear();
         const kinds = event.data.kinds || {};
