@@ -210,6 +210,12 @@
     // could leak an old KV/K value into a fresh lookup.
     const targetCardNorm = normalize(requestedPatient && requestedPatient.card || "");
     if (!targetCardNorm) return "";
+    // This runs every poll while the portal is answering. innerText and style
+    // checks force a layout on the portal's own thread and slow its reply, so
+    // first check the cheap textContent for the card number: until it is on the
+    // page (or in an element), there is nothing to read there.
+    const mentionsCard = el => String(el && el.textContent || "").toLowerCase().replace(/[^a-z0-9]/g, "").includes(targetCardNorm);
+    if (!mentionsCard(document.body)) return "";
     const helperSelector = "#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger";
     const isVisible = el => {
       if (!el || !el.getClientRects().length) return false;
@@ -217,7 +223,7 @@
       return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
     };
     const cleanCandidate = el => {
-      if (!isVisible(el) || el.closest(helperSelector)) return null;
+      if (!mentionsCard(el) || !isVisible(el) || el.closest(helperSelector)) return null;
       const txt = String(el.innerText || el.textContent || "").normalize("NFC").replace(/\s+/g, " ").trim();
       if (!txt || txt.length > 9000) return null;
       const notice = extractCanonicalNotice(txt, targetCardNorm);
@@ -243,7 +249,7 @@
     // Exclude body and form/table containers to prevent mixed page/history text.
     const fallback = [];
     for (const el of document.querySelectorAll("div, p, span")) {
-      if (el.closest("form, table, #his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger")) continue;
+      if (!mentionsCard(el) || el.closest("form, table, #his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger")) continue;
       const txt = String(el.innerText || "").trim();
       if (txt.length < 35 || txt.length > 2200) continue;
       const candidate = cleanCandidate(el);
@@ -299,7 +305,6 @@
     // Parse fields only from the notification that belongs to the requested card.
     // Do not append document.body: hidden/stale text can contain a previous patient's KV.
     const notification = getNotification(requestedPatient);
-    const bodyText = textOf(document.body).slice(0, 12000);
     const allResultText = String(notification || "").normalize("NFC").replace(/\s+/g, " ").trim();
     const kvMatch = allResultText.match(/\bKV(?:\s*\/\s*K)?\s*[:：]\s*([A-Z0-9-]{1,12})/i);
     // The portal may provide a full DOB or only the birth year. Capture both
@@ -392,11 +397,46 @@
         admissionDate: dateOnly(requestedPatient.admissionDate),
         dischargeDate: dateOnly(requestedPatient.dischargeDate)
       } : null,
-      needsCaptcha: /captcha|ma xac nhan|ma bao mat|xac nhan robot/i.test(normalize(bodyText))
+      // Reading the whole page is costly: done once, when the lookup gives up.
+      needsCaptcha: false
     };
+  }
+  function pageAsksCaptcha() {
+    return /captcha|ma xac nhan|ma bao mat|xac nhan robot/i.test(normalize(textOf(document.body).slice(0, 12000)));
+  }
+
+  // The portal answers within a few seconds normally, but can be much slower.
+  const PORTAL_RESULT_TIMEOUT_MS = 20000;
+
+  // What the portal's THÔNG BÁO box shows right now (any card), shortened, so a
+  // failed lookup can say why: an old patient's notice (no answer yet), an
+  // error message, or a notice the reader could not parse.
+  function visibleNoticeText() {
+    const helperSelector = "#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger";
+    const found = [];
+    for (const el of document.querySelectorAll("fieldset, [role='alert'], .alert, [id*='thongbao' i], [class*='thongbao' i]")) {
+      if (!visible(el) || el.closest(helperSelector)) continue;
+      const txt = textOf(el);
+      if (txt && /thongbao/.test(normalize(txt.slice(0, 60)))) found.push(txt);
+    }
+    found.sort((a, b) => a.length - b.length);
+    return found.length ? found[0].slice(0, 400) : "";
+  }
+
+  // Lookups come in a run during QUÉT: keep the page awake (portal_main.js)
+  // from the first lookup until 3 minutes after the last one.
+  let awakeOffTimer = null;
+  function keepPortalAwake() {
+    window.postMessage({ __scanPortalAwakeV1: true, on: true }, "*");
+    if (awakeOffTimer) clearTimeout(awakeOffTimer);
+    awakeOffTimer = setTimeout(() => {
+      awakeOffTimer = null;
+      window.postMessage({ __scanPortalAwakeV1: true, on: false }, "*");
+    }, 180000);
   }
 
   function fillAndQuery(message, sendResponse) {
+    keepPortalAwake();
     if (location.hostname !== "gdbhyt.baohiemxahoi.gov.vn" || !location.pathname.toLowerCase().includes("/thongtuyenlskcb/")) {
       sendResponse({ ok: false, message: "Tab đích không phải trang Thông tuyến khám chữa bệnh." });
       return;
@@ -454,8 +494,10 @@
       const elapsed = Date.now() - started;
       // Wait for a complete, card-specific notice to settle. Intermediate page
       // renders and the visit-history table must never be treated as a new result.
+      // Name + birth date/gender confirm the notice is fully drawn. After a few
+      // seconds a notice for this card is accepted even if they did not parse.
       const hasUsableIdentity = Boolean(snapshot.name && (snapshot.dob || snapshot.gender));
-      const validCurrentResult = snapshot.resultFound && snapshot.responseMatchesPatient && hasUsableIdentity;
+      const validCurrentResult = snapshot.resultFound && snapshot.responseMatchesPatient && (hasUsableIdentity || elapsed >= 4000);
       const signature = validCurrentResult ? [
         normalize(snapshot.notification), normalize(snapshot.card), normalize(snapshot.name),
         normalize(snapshot.dob), normalize(snapshot.gender), normalize(snapshot.cardStart),
@@ -464,8 +506,8 @@
       if (validCurrentResult && signature && signature === lastValidSignature) stableValidPolls++;
       else stableValidPolls = validCurrentResult && signature ? 1 : 0;
       lastValidSignature = signature;
-      // Same reply on 2 polls in a row (~0.5 s) is enough; no fixed minimum wait.
-      if (elapsed >= 500 && stableValidPolls >= 2) {
+      // Same reply on 2 polls in a row (~0.3 s) is enough.
+      if (elapsed >= 300 && stableValidPolls >= 2) {
         clearPoll(timer);
         if (activeLookupTimer === timer) activeLookupTimer = null;
         chrome.runtime.sendMessage({
@@ -474,9 +516,10 @@
           requestedPatient: patient,
           result: snapshot
         });
-      } else if (elapsed >= 12000) {
+      } else if (elapsed >= PORTAL_RESULT_TIMEOUT_MS) {
         clearPoll(timer);
         if (activeLookupTimer === timer) activeLookupTimer = null;
+        const portalNotice = visibleNoticeText();
         // Do not send any fields from a mismatched/previous notification.
         chrome.runtime.sendMessage({
           type: "BHYT_RESULT",
@@ -488,13 +531,13 @@
             registrationFacility: "", kv: "", cardStart: "", cardExpiry: "",
             daysRemaining: null, expiryStatus: "unknown",
             expiryMessage: "Chưa xác nhận được thời hạn thẻ từ lượt tra cứu hiện tại",
-            resultFound: false, responseMatchesPatient: false, staleResult: true,
+            resultFound: false, responseMatchesPatient: false, staleResult: true, portalNotice,
             requestedPatient: snapshot.requestedPatient || patient,
-            needsCaptcha: snapshot.needsCaptcha
+            needsCaptcha: pageAsksCaptcha()
           }
         });
       }
-    }, 250);
+    }, 150);
     activeLookupTimer = timer;
   }
 

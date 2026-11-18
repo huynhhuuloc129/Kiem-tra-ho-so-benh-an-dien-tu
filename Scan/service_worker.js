@@ -14,6 +14,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // QUÉT start/stop: while it runs, the browser must not discard the HIS tab or
+  // the portal tab to save memory (Chrome Memory Saver) when they are in the
+  // background. Restored to discardable when the scan ends.
+  if (message.type === "SCAN_KEEP_TABS") {
+    if (!sender || !sender.tab || !String(sender.url || "").startsWith("https://bvdksoctrang.vncare.vn/")) return false;
+    const autoDiscardable = !message.on;
+    const set = id => { try { chrome.tabs.update(id, { autoDiscardable }, () => { void chrome.runtime.lastError; }); } catch (_) {} };
+    set(sender.tab.id);
+    chrome.tabs.query({ url: "https://gdbhyt.baohiemxahoi.gov.vn/ThongTuyenLSKCB/Index*" }, tabs => {
+      for (const t of tabs || []) if (Number.isInteger(t.id)) set(t.id);
+    });
+    return false;
+  }
+
   if (message.type === "BHYT_LOOKUP") {
     if (!sender || !String(sender.url || "").startsWith("https://bvdksoctrang.vncare.vn/")) {
       sendResponse({ ok: false, message: "Chỉ nhận yêu cầu đối chiếu từ trang HIS đã được cấu hình." });

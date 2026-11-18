@@ -18,6 +18,9 @@
   let currentGroup = "";
   let currentCase = "";
   let currentVisibleEncounter = "";
+  // Id of the patient list grid (see scanListGrid); declared here because the
+  // open-visit detection uses it before the QUÉT section runs.
+  let scanListGridId = "grdLS";
   let currentVisibleSelection = "";
   // Set by QUÉT to the BA it just selected, so encounter detection cannot drift.
   let scanForcedEncounter = "";
@@ -2195,7 +2198,7 @@
     // search screen (several visits of one patient, empty Mã BA box) fell through
     // to "topmost BA on screen" = always row 1, so switching visits never reset
     // the previous visit's rows.
-    const patientGrid = document.getElementById("grdLS");
+    const patientGrid = scanListGrid();
     const selectedPatientRow = patientGrid && patientGrid.querySelector("tr.jqgrow.ui-state-highlight, tr.jqgrow[aria-selected='true']");
     if (selectedPatientRow) {
       const match = String(selectedPatientRow.textContent || "").match(baPattern);
@@ -2851,8 +2854,9 @@
     #scanx-scan-panel .sc-errors{margin:0;padding:6px 8px 6px 26px}
     #scanx-scan-panel .sc-errors li{margin:2px 0;color:#842018;overflow-wrap:anywhere}
     #scanx-scan-panel .sc-errors b{color:#5b1610}
-    #scanx-scan-panel .sc-errors li.sc-info{color:#8a5a00;background:#fff8d6;border-radius:4px;padding:1px 4px}
-    #scanx-scan-panel .sc-errors li.sc-info b{color:#7a4f00}
+    #scanx-scan-panel .sc-errors li.sc-info{color:#222;background:#fff8d6;border-radius:4px;padding:1px 4px}
+    #scanx-scan-panel .sc-errors li.sc-info b,
+    #scanx-scan-panel .sc-errors li.sc-info li{color:#222}
     #scanx-scan-panel .sc-errors ul.sc-repeat-lines{margin:2px 0 3px 14px;padding:0;list-style:disc}
     #scanx-scan-panel .sc-errors ul.sc-repeat-lines li{margin:1px 0;background:none;padding:0}
     #scanx-scan-panel .sc-meta{margin:6px 8px 2px;padding:5px 8px;border-left:3px solid #1a73e8;background:#eef4fd;border-radius:4px;color:#1f2937;font-size:11px}
@@ -2880,7 +2884,8 @@
   scanPanel.id = "scanx-scan-panel";
   scanPanel.innerHTML = `<div class="sc-head"><span>QUÉT BỆNH NHÂN</span><div class="sc-head-actions">
       <button type="button" class="sc-primary" data-scan-act="start">Bắt đầu quét</button>
-      <button type="button" data-scan-act="stop" disabled>Dừng</button>
+      <button type="button" class="sc-primary" data-scan-act="resume" style="display:none" title="Quét tiếp từ ca đang dừng, giữ kết quả đã quét">Tiếp tục</button>
+      <button type="button" data-scan-act="stop" disabled title="Tạm dừng; bấm &quot;Tiếp tục&quot; để quét tiếp, hoặc &quot;Bắt đầu quét&quot; để quét lại từ đầu">Tạm dừng</button>
       <button type="button" data-scan-act="close">Đóng</button></div></div>
     <div class="sc-body"><div class="sc-status">Chọn phạm vi rồi bấm "Bắt đầu quét". Giữ tab HIS đang mở trong khi quét.</div>
     <div class="sc-opts">
@@ -2959,6 +2964,7 @@
   const scanResultsEl = scanPanel.querySelector(".sc-results");
   const scanStartBtn = scanPanel.querySelector('[data-scan-act="start"]');
   const scanStopBtn = scanPanel.querySelector('[data-scan-act="stop"]');
+  const scanResumeBtn = scanPanel.querySelector('[data-scan-act="resume"]');
   const scanBhytInput = scanPanel.querySelector("[data-scan-bhyt]");
   const scanBhytBtn = scanPanel.querySelector('[data-scan-act="bhyt"]');
   scanBhytInput.value = scanLoadEarly("hthScanBhyt");
@@ -3028,6 +3034,15 @@
 
   let scanRunning = false;
   let scanStopRequested = false;
+  // Set when a scan is paused ("Tạm dừng"): what "Tiếp tục" needs to carry on
+  // from the interrupted patient. Cleared when a new scan starts.
+  let scanPaused = null;
+  // Why QUÉT paused itself (shown in the status line), "" when the user paused.
+  let scanPauseReason = "";
+  function scanSetPaused(state) {
+    scanPaused = state;
+    scanResumeBtn.style.display = state ? "" : "none";
+  }
   scanSyncBhytRow();
   let scanLastDataAt = 0;
   let scanResults = [];
@@ -3135,9 +3150,12 @@
     const card = ((text.match(/\b([A-Z]{2}\d{13})\b/) || [])[1] || "").toUpperCase();
     const dobText = (text.match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b(?!\s+\d{1,2}:\d{2})/) || [])[1] || "";
     const patientKey = patientId ? `BN:${patientId}` : (card ? `BHYT:${card}` : (name && dobText ? `NAME:${domToken(name)}|${dobText}` : ""));
-    // Visit date = "Ngày vào viện" column, else the first date-time in the row (birth date has no time).
-    const admissionCell = scanCellByField(row, /NGAYVAO|VAOVIEN|NGAYTIEPNHAN|THOIGIANVAO/i);
-    const admissionText = admissionCell ? String(admissionCell.textContent || "").trim() : "";
+    // Visit date = "Đến khám" on the bill: NGAYTIEPNHAN (reception), else the
+    // admission time. Never NGAYVAOKHOA ("Vào khoa"): entering the department
+    // can be days later. Else the first date-time in the row (birth date has no time).
+    const admissionText = [/_NGAYTIEPNHAN$/i, /_THOIGIANVAOVIEN$|_NGAYVAOVIEN$|_NGAY_VAO_VIEN$/i, /_NGAYVAO$|_NGAY_VAO$/i]
+      .map(p => { const td = scanCellByField(row, p); return td ? String(td.textContent || "").trim() : ""; })
+      .find(t => auditDateOnly(t)) || "";
     const visitDate = auditDateOnly(admissionText) ||
       auditDateOnly((text.match(/\b(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2})/) || [])[1] || "");
     const cellText = pattern => { const td = scanCellByField(row, pattern); return td ? String(td.textContent || "").replace(/\s+/g, " ").trim() : ""; };
@@ -3149,8 +3167,21 @@
     return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate, bhyt, address, birthYear, dob,
       label: [caseNo, name].filter(Boolean).join(" – ") || text.slice(0, 80) };
   }
+  // The patient list grid: #grdLS on most HIS screens, but some list screens
+  // use another table id. Then it is the jqGrid table holding patient rows
+  // (remembered in scanListGridId, so the same table is used for the rest of the scan).
+  function scanListGrid() {
+    const known = document.getElementById(scanListGridId) || document.getElementById("grdLS");
+    if (known) return known;
+    for (const row of document.querySelectorAll("tr.jqgrow")) {
+      if (insideHelperUI(row) || !isVisibleElement(row) || !hthIsLikelyPatientRow(row)) continue;
+      const table = row.closest("table[id]");
+      if (table) { scanListGridId = table.id; return table; }
+    }
+    return null;
+  }
   function scanPatientRows() {
-    const grid = document.getElementById("grdLS");
+    const grid = scanListGrid();
     if (grid) {
       const rows = Array.from(grid.querySelectorAll("tr.jqgrow"))
         .filter(row => getComputedStyle(row).display !== "none");
@@ -3178,7 +3209,7 @@
   function scanResolveRow(info) {
     if (info.row && document.contains(info.row)) return info.row;
     if (info.rowId) {
-      const grid = document.getElementById("grdLS");
+      const grid = scanListGrid();
       const byId = grid ? grid.querySelector(`tr[id="${CSS.escape(info.rowId)}"]`) : null;
       if (byId) return byId;
     }
@@ -3225,7 +3256,9 @@
         resolve({ ok: false, error: "main.js không phản hồi (hãy tải lại tiện ích và trang HIS)" });
       }, 2000);
       window.addEventListener("message", onMessage);
-      window.postMessage({ __scanRequestV1: true, id, ...payload }, "*");
+      // gridId: the patient list table main.js should use (not always #grdLS).
+      const grid = scanListGrid();
+      window.postMessage({ __scanRequestV1: true, id, gridId: grid ? grid.id : "", ...payload }, "*");
     });
   }
   async function scanWaitKeyChange(previousKey, ms) {
@@ -3236,13 +3269,41 @@
     }
     return scanHisKey() !== previousKey;
   }
+  // The patient list (#grdLS) can be missing for a while, e.g. when HIS is
+  // slowed down in a background tab and has not redrawn the "Danh sách" tab
+  // yet. Re-open that tab now and then and wait for the grid to come back.
+  async function scanEnsureListGrid(ms = 20000) {
+    for (let waited = 0; ; waited += 250) {
+      if (scanListGrid()) return true;
+      if (waited >= ms || scanStopRequested) return false;
+      if (waited % 4000 === 0) {
+        const listTab = scanFindHisTab(SCAN_LIST_TAB);
+        if (listTab) scanClickHisTab(listTab);
+      }
+      await scanSleep(250);
+    }
+  }
   // Select a patient the same way a user does, falling back to the jqGrid API.
+  // gridMissing: the patient list was not there (QUÉT pauses instead of
+  // reporting this and every following patient as "cannot open").
   async function scanSelectPatient(row, info, previousKey, alreadySelected) {
+    if (!scanListGrid() || !document.contains(row)) {
+      if (!await scanEnsureListGrid()) {
+        try { console.warn(`[Scan] Không thấy lưới #grdLS (tab ${document.visibilityState}).`); } catch (_) {}
+        return { switched: false, gridMissing: true, error: "Không thấy danh sách bệnh nhân (lưới #grdLS) trên HIS" };
+      }
+      row = scanResolveRow(info) || row;
+    }
     scanClickRow(row);
     if (alreadySelected) return { switched: true, method: "đang chọn sẵn" };
     if (await scanWaitKeyChange(previousKey, 1500)) return { switched: true, method: "click" };
     if (!info.rowId) return { switched: false, error: "Dòng không có id jqGrid" };
-    const res = await scanMainSelect(info.rowId);
+    let res = await scanMainSelect(info.rowId);
+    if (!res.ok && /Không thấy lưới/.test(String(res.error || ""))) {
+      // The list went away between the click and the fallback: wait, retry once.
+      if (!await scanEnsureListGrid()) return { switched: false, gridMissing: true, error: res.error };
+      res = await scanMainSelect(info.rowId);
+    }
     if (await scanWaitKeyChange(previousKey, SCAN_SWITCH_WAIT_MS)) return { switched: true, method: "jqGrid" };
     return { switched: false, error: res.ok ? "HIS không chuyển sang ca này" : res.error };
   }
@@ -3613,37 +3674,60 @@
     return { errors, rows };
   }
 
-  // ---- ALBUMIN MÁU > 25 g/L ----
-  // Every blood albumin result (Kết quả xét nghiệm, NT.024.2) above 25 g/L is
-  // an error: "10/11/2026 10:26:00 [Albumin]: Định lượng Albumin [Máu] = 30.1 g/L (> 25 g/L)".
-  const SCAN_ALBUMIN_MAX = 25;
+  // ---- ALBUMIN MÁU (cảnh báo) ----
+  // Every visit with a blood albumin test (XN045 "Định lượng Albumin [Máu]") gets
+  // a warning, whatever the result: one line per order day, e.g.
+  // "10/11/2026 07:22:00 [Albumin]: Có chỉ định Định lượng Albumin [Máu]. Kết quả: 30,1 g/L (10:26:00)".
+  // Ordered tests come from the DVKT rows (Dịch vụ chỉ định); result values
+  // (NT.024.2), when loaded, are added to the line of their day.
   function scanIsBloodAlbumin(row) {
-    if (auditText(row.code).toUpperCase() === "XN045") return true;
+    for (const code of [row.code, row.bhytCode, row.hisCode, row.serviceCode]) {
+      if (auditText(code).toUpperCase() === "XN045") return true;
+    }
     const token = domToken(row.name);
     return token.includes("ALBUMIN") && token.includes("MAU") && !token.includes("MICRO");
   }
   function scanAlbuminFindings() {
-    const errors = [];
+    const infos = [];
     const key = auditState.contextKey;
+    // day -> { time, names, results }
+    const byDay = new Map();
+    const dayEntry = day => {
+      if (!byDay.has(day)) byDay.set(day, { time: "", names: new Set(), results: [] });
+      return byDay.get(day);
+    };
+    for (const row of auditState.dvktRows.values()) {
+      if (!scanIsBloodAlbumin(row)) continue;
+      const when = auditDateTimeText(rowOrderSource(row, Array.isArray(row.timePoints) ? row.timePoints : []));
+      const entry = dayEntry(auditDateOnly(when));
+      const time = when.split(" ")[1] || "";
+      if (time && (!entry.time || time < entry.time)) entry.time = time;
+      entry.names.add(auditText(row.name) || "Albumin");
+    }
     for (const row of auditState.labResults.values()) {
       if (key && row.contextKey && row.contextKey !== key) continue;
       if (!scanIsBloodAlbumin(row)) continue;
-      const m = auditText(row.value).replace(/,/g, ".").match(/-?\d+(?:\.\d+)?/);
-      const value = m ? Number(m[0]) : NaN;
-      if (!Number.isFinite(value) || value <= SCAN_ALBUMIN_MAX) continue;
       const when = auditDateTimeText(row.resultTime || row.performedTime || "");
-      const unit = auditText(row.unit) || "g/L";
-      errors.push({
-        module: "Albumin", date: auditDateOnly(when), time: when.split(" ")[1] || "", item: "",
-        message: `${auditText(row.name) || "Albumin"} = ${auditText(row.value)} ${unit} (> ${SCAN_ALBUMIN_MAX} g/L)`,
-        detail: `Trị số bình thường: ${auditText(row.normalRange) || "không rõ"}; thực hiện ${auditText(row.performedTime) || "không rõ"}; trả kết quả ${auditText(row.resultTime) || "không rõ"}.`
+      const day = auditDateOnly(when);
+      // A result is shown on its own day's line, else on the only order line.
+      const entry = byDay.has(day) ? byDay.get(day) : (byDay.size === 1 ? byDay.values().next().value : dayEntry(day));
+      if (!entry.names.size) entry.names.add(auditText(row.name) || "Albumin");
+      entry.results.push({ row, time: when.split(" ")[1] || "", when });
+    }
+    for (const [day, entry] of byDay) {
+      entry.results.sort((x, y) => x.when.localeCompare(y.when));
+      const values = entry.results.map(r => `${auditText(r.row.value)} ${auditText(r.row.unit) || "g/L"}${r.time ? ` (${r.time})` : ""}`);
+      infos.push({
+        module: "Albumin", date: day, time: entry.time || (entry.results[0] && entry.results[0].time) || "", item: "",
+        message: `Có chỉ định ${[...entry.names].join(", ")}.${values.length ? ` Kết quả: ${values.join(", ")}` : ""}`,
+        detail: entry.results.length
+          ? entry.results.map(r => `${auditText(r.row.name) || "Albumin"} = ${auditText(r.row.value)} ${auditText(r.row.unit) || "g/L"}; ` +
+              `trị số bình thường: ${auditText(r.row.normalRange) || "không rõ"}; thực hiện ${auditText(r.row.performedTime) || "không rõ"}; ` +
+              `trả kết quả ${auditText(r.row.resultTime) || "không rõ"}.`).join("\n")
+          : "Chưa đọc được kết quả xét nghiệm."
       });
     }
-    // Results that could not be loaded: the albumin check did not run for them.
-    for (const reason of auditState.labErrors) {
-      errors.push({ module: "Hệ thống", item: "", message: `Không tải được kết quả xét nghiệm (kiểm tra Albumin): ${reason}` });
-    }
-    return errors;
+    return { errors: [], infos };
   }
 
   // scanned: { xn, thuoc, pttt } = the "Kiểm tra" buttons when the scan started.
@@ -3694,7 +3778,8 @@
     }
     const pttt = scanned.pttt ? scanPtttFindings() : { errors: [], rows: [] };
     errors.push(...pttt.errors);
-    if (scanned.xn) errors.push(...scanAlbuminFindings());
+    const albumin = scanned.xn ? scanAlbuminFindings() : { errors: [], infos: [] };
+    errors.push(...albumin.errors);
     const fallbackDay = (info && info.visitDate) || auditDateOnly(auditState.context && auditState.context.admissionDate || "");
     // Every XN/DVKT row captured for the visit, for the "Xét nghiệm / DVKT"
     // table (order day/time, else the first performed/result time). No row is
@@ -3714,6 +3799,8 @@
     const xnModules = new Set(["DVKT", "CT", "PTTT", "Albumin"]);
     return {
       errors: errors.filter(err => !(xnModules.has(err.module) && scanIsTooOld(err.date, cutoff))),
+      // Warnings (yellow): Albumin > 25 g/L.
+      infos: albumin.infos.filter(info => !scanIsTooOld(info.date, cutoff)),
       xnRows,
       ptttRows,
       repeatTests: scanned.xn ? scanCollectRepeatTests(fallbackDay) : [],
@@ -3826,7 +3913,8 @@
         const badCount = bhytRows.filter(r => r.bad).length;
         const details = document.createElement("details");
         if (badCount) details.open = true;
-        details.appendChild(auditElement("summary", "", `BHYT – đối chiếu cổng${badCount ? ` · ${badCount} mục không khớp` : " · khớp"}`));
+        const noPortal = bhytRows.every(r => !r.portal);
+        details.appendChild(auditElement("summary", "", `BHYT – đối chiếu cổng${badCount ? ` · ${badCount} mục không khớp` : (noPortal ? " · chưa có dữ liệu cổng (chỉ HIS)" : " · khớp")}`));
         const table = document.createElement("table");
         const thead = document.createElement("tr");
         for (const h of ["Mục", "HIS", "Cổng BHYT", "Đối chiếu"]) thead.appendChild(auditElement("th", "", h));
@@ -3859,7 +3947,8 @@
   // sends back the notice for that card. The HIS data and the portal data are
   // compared like the BHYT button of "Kiểm tra hồ sơ bệnh án điện tử":
   // mismatches are errors (red), points to check are information (yellow).
-  const SCAN_BHYT_TIMEOUT_MS = 25000;
+  const SCAN_BHYT_TIMEOUT_MS = 30000;
+  const SCAN_BHYT_ATTEMPTS = 3;
   function scanBhytNorm(value) {
     return String(value ?? "").trim().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "D")
       .toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -3908,6 +3997,11 @@
     return m ? Date.UTC(+m[3], +m[2] - 1, +m[1]) : null;
   }
 
+  // While QUÉT runs, the HIS and portal tabs must not be discarded in the background.
+  function scanKeepTabs(on) {
+    try { chrome.runtime.sendMessage({ type: "SCAN_KEEP_TABS", on: !!on }, () => { void chrome.runtime.lastError; }); } catch (_) {}
+  }
+
   // Is the portal tab open? (asked once when a scan with BHYT starts)
   function scanBhytPing() {
     return new Promise(resolve => {
@@ -3929,7 +4023,9 @@
     if (scanBhytNorm(requested.caseNo) !== scanBhytNorm(scanBhytPending.caseNo)) return;
     scanBhytPending.done = { ok: true, result };
   });
-  async function scanBhytLookup(patient) {
+  // One portal lookup, now (called only by the pump, one at a time).
+  // timedOut: no BHYT_RESULT within SCAN_BHYT_TIMEOUT_MS (the pump retries it).
+  async function scanBhytLookupNow(patient) {
     if (scanBhytPending) scanBhytPending.done = scanBhytPending.done || { ok: false, message: "Đã bị thay bằng lượt tra cứu khác." };
     const pending = { caseNo: patient.caseNo, done: null };
     scanBhytPending = pending;
@@ -3945,24 +4041,88 @@
     const t0 = Date.now();
     while (!pending.done && !scanStopRequested && Date.now() - t0 < SCAN_BHYT_TIMEOUT_MS) await scanSleep(200);
     if (scanBhytPending === pending) scanBhytPending = null;
-    return pending.done || { ok: false, message: scanStopRequested ? "Đã dừng." : `Cổng BHYT không trả kết quả trong ${SCAN_BHYT_TIMEOUT_MS / 1000} giây.` };
+    if (pending.done) return pending.done;
+    return scanStopRequested ? { ok: false, message: "Đã dừng." }
+      : { ok: false, timedOut: true, message: `Cổng BHYT không trả kết quả trong ${SCAN_BHYT_TIMEOUT_MS / 1000} giây.` };
   }
-
   // One portal lookup per card + name + birth date per scan: a person's visits
   // with the same card get the same portal reply. Failed lookups are not kept.
+  //
+  // The portal works as its own "thread": at scan start every visit is queued
+  // (card / name / birth date from the patient list row) and a single pump
+  // looks them up one after another (the portal has one form), running ahead
+  // of the HIS loop instead of only one visit ahead. A visit whose lookup is
+  // needed now (its HIS details differ from the row, or a prefetch failed)
+  // jumps ahead of the queue.
   let scanBhytCache = new Map();
-  function scanBhytCachedLookup(patient) {
-    const key = [scanBhytNorm(patient.card), scanBhytNorm(patient.name), scanBhytDateOnly(patient.dob)].join("|");
+  let scanBhytAhead = [];
+  let scanBhytUrgent = [];
+  let scanBhytPumping = false;
+  const scanBhytKey = patient => [scanBhytNorm(patient.card), scanBhytNorm(patient.name), scanBhytDateOnly(patient.dob)].join("|");
+  function scanBhytCachedLookup(patient, urgent = true) {
+    const key = scanBhytKey(patient);
     let entry = scanBhytCache.get(key);
     if (!entry) {
-      entry = scanBhytLookup(patient).then(res => {
-        const r = res && res.result;
-        if (!res.ok || !r || !r.resultFound || !r.responseMatchesPatient) scanBhytCache.delete(key);
-        return res;
-      });
+      entry = { key, patient, started: false, resolve: null };
+      entry.promise = new Promise(resolve => { entry.resolve = resolve; });
       scanBhytCache.set(key, entry);
+      (urgent ? scanBhytUrgent : scanBhytAhead).push(entry);
+    } else if (urgent && !entry.started && !scanBhytUrgent.includes(entry)) {
+      scanBhytUrgent.push(entry);
     }
-    return entry;
+    scanBhytPump();
+    return entry.promise;
+  }
+  // Queued lookups that have not started: answered "stopped" and forgotten
+  // (a resumed scan queues them again).
+  function scanBhytCancelQueued() {
+    for (const entry of [...scanBhytUrgent, ...scanBhytAhead]) {
+      if (entry.started) continue;
+      if (scanBhytCache.get(entry.key) === entry) scanBhytCache.delete(entry.key);
+      entry.resolve({ ok: false, message: "Đã dừng." });
+    }
+    scanBhytUrgent = []; scanBhytAhead = [];
+  }
+  async function scanBhytPump() {
+    if (scanBhytPumping) return;
+    scanBhytPumping = true;
+    try {
+      for (;;) {
+        if (scanStopRequested || !scanRunning) { scanBhytCancelQueued(); break; }
+        const entry = scanBhytUrgent.shift() || scanBhytAhead.shift();
+        if (!entry) break;
+        if (entry.started) continue;
+        entry.started = true;
+        let res;
+        try {
+          // The portal is slow at times: a timeout or a notice that never showed
+          // this card is retried (not a captcha or a broken connection).
+          for (let attempt = 1; attempt <= SCAN_BHYT_ATTEMPTS && !scanStopRequested; attempt++) {
+            res = await scanBhytLookupNow(entry.patient);
+            const r = res && res.result;
+            const retry = res && (res.ok ? !!(r && r.staleResult && !r.needsCaptcha) : !!res.timedOut);
+            if (!retry) break;
+            if (attempt < SCAN_BHYT_ATTEMPTS) await scanSleep(1500);
+          }
+        } catch (err) {
+          res = { ok: false, message: String(err && err.message || err) };
+        }
+        const r = res && res.result;
+        if ((!res || !res.ok || !r || !r.resultFound || !r.responseMatchesPatient) && scanBhytCache.get(entry.key) === entry) scanBhytCache.delete(entry.key);
+        entry.resolve(res || { ok: false, message: "Đã dừng." });
+      }
+    } finally {
+      scanBhytPumping = false;
+    }
+  }
+  // Queue the portal lookups of these visits (in scan order) from their
+  // patient list rows; the visit's own check reuses them by cache key.
+  function scanBhytQueueAhead(infos) {
+    for (const info of infos) {
+      const patient = { caseNo: info.caseNo, card: scanBhytNorm(info.bhyt), name: info.name, dob: scanBhytDateOnly(info.dob) };
+      if (!scanBhytValidCard(patient.card, patient.caseNo) || !patient.name || !patient.dob) continue;
+      scanBhytCachedLookup(patient, false);
+    }
   }
 
   // The HIS details of this visit: from main.js (waits for them a little),
@@ -3988,36 +4148,130 @@
   // portal lookup starts before that, but TKNOICD must wait: it is asked with
   // the case ids in HIS's hidden fields, which still hold the previous case's
   // ids right after the click (NT.005 then answers for the wrong case).
+  // MA_KCBBD ("(6) Mã" on the bill) from the HIS patient list
+  // (ajaxExecuteQueryPaging), by case number, patient id or card number.
+  // TKNOICD is not used: it is the transfer-from facility ("Mã CSKCB nơi
+  // người bệnh đến") and is only set for transferred patients.
+  // -> { value, miss } (miss: why it was not found).
+  async function scanBhytHisKcbbd(info, his, visit) {
+    const hisKcbbd = () => scanKcbbdByKey.get(scanBhytNorm(info.caseNo)) ||
+      scanKcbbdByKey.get(scanBhytNorm(his.caseNo)) ||
+      (his.patientId ? scanKcbbdByKey.get("BN:" + scanBhytNorm(his.patientId)) : "") ||
+      scanKcbbdByKey.get(scanKcbbdCardKey(his.card)) ||
+      his.registrationFacility || "";
+    // main.js keeps every MA_KCBBD it saw (the list may load before this script);
+    // for a patient it has not seen, it reads the patient list again once.
+    const kcbbdCase = scanBhytNorm(info.caseNo || his.caseNo);
+    scanKcbbdStatus.delete(kcbbdCase);
+    if (!hisKcbbd()) window.postMessage({ __scanMsgV1: true, type: "KCBBD_ASK",
+      want: { caseNo: info.caseNo || his.caseNo || "", patientId: his.patientId || "", card: his.card || "" } }, "*");
+    while (visit && !visit.ready && !scanStopRequested) await scanSleep(100);
+    for (let waited = 0; !hisKcbbd() && !scanKcbbdStatus.has(kcbbdCase) && waited < 16000 && !scanStopRequested; waited += 200) await scanSleep(200);
+    const value = hisKcbbd();
+    const st = scanKcbbdStatus.get(kcbbdCase);
+    const miss = value ? "" :
+      st && st.status === "noList" ? "chưa đọc được MA_KCBBD: HIS chưa tải danh sách bệnh nhân từ khi mở trang (bấm Tìm kiếm trên danh sách rồi quét lại)" :
+      st && st.status === "notInList" ? `chưa đọc được MA_KCBBD: danh sách bệnh nhân (${st.listRows} dòng) không có bệnh nhân này hoặc MA_KCBBD trống` :
+      "chưa đọc được MA_KCBBD (mở lại danh sách bệnh nhân trên HIS)";
+    return { value, miss };
+  }
+
+  // Set by QUÉT when the BHYT portal tab is not open: BHYT shows HIS only.
+  let scanBhytPortalDown = "";
   async function scanBhytCheck(info, visit) {
     const errors = [], infos = [], rows = [];
     const date = info.visitDate || "";
     const bad = (message, detail) => errors.push({ module: "BHYT", date, item: "", message, detail });
     const note = (message, detail) => infos.push({ module: "BHYT", date, item: "", message, detail });
+    const tStart = Date.now();
     const patient = await scanBhytPatient(info);
+    try { console.info(`[Scan] BHYT ${info.caseNo}: chờ thông tin thẻ từ HIS ${((Date.now() - tStart) / 1000).toFixed(1)} s`); } catch (_) {}
     if (scanStopRequested) return { errors, infos, rows };
     if (!patient) {
       if (info.bhyt) bad("Không đọc đủ mã thẻ / họ tên / ngày sinh của ca từ HIS nên chưa tra cứu cổng BHYT.");
       else note("Không có mã thẻ BHYT trên HIS: không tra cứu cổng.");
       return { errors, infos, rows };
     }
-    const lookup = await scanBhytCachedLookup(patient);
-    if (!lookup.ok) {
-      bad(`Không tra cứu được cổng BHYT: ${lookup.message}`);
-      return { errors, infos, rows };
-    }
-    const data = lookup.result || {};
-    const his = patient;
-    if (!data.resultFound || !data.responseMatchesPatient) {
-      bad(data.staleResult
-        ? "Cổng chưa trả thông báo khớp mã thẻ đang tra: kiểm tra trực tiếp trên cổng."
-        : "Chưa xác định được kết quả của đúng mã thẻ đang tra: kiểm tra trực tiếp trên cổng.",
-        data.needsCaptcha ? "Cổng đang yêu cầu xác thực bổ sung." : "");
-      return { errors, infos, rows };
-    }
+    // A copy, refreshed below: scanBhytPatient returns as soon as card / name /
+    // birth date are known (the patient list row has them), and the detail
+    // response carrying THOIGIAN (card validity) can arrive a moment later.
+    const his = { ...patient };
+    let hisPeriod = "";
+    const refreshHis = () => {
+      const latest = scanPatientByCase.get(scanBhytNorm(info.caseNo || patient.caseNo));
+      if (latest && scanBhytNorm(latest.card) === scanBhytNorm(his.card)) {
+        for (const field of ["cardValidityPeriod", "hisCardStart", "hisCardExpiry", "gender", "kv", "patientId",
+          "registrationFacility", "admissionDate", "dischargeDate"]) {
+          if (latest[field] && !his[field]) his[field] = latest[field];
+        }
+      }
+      hisPeriod = his.cardValidityPeriod || [his.hisCardStart, his.hisCardExpiry].filter(Boolean).join(" – ");
+    };
     const row = (field, hisValue, portalValue, status = "", text = "") => {
       rows.push({ field, his: String(hisValue || ""), portal: String(portalValue || ""),
         result: text || (status === "good" ? "Khớp" : status === "bad" ? "Không khớp" : ""), bad: status === "bad", warn: status === "warn" });
     };
+    // Usually already looked up (or running) by the portal pump; if not, it
+    // jumps the queue and runs while HIS loads the visit and MA_KCBBD is looked for.
+    const lookupPromise = scanBhytPortalDown ? null : scanBhytCachedLookup(patient);
+    // MA_KCBBD from the HIS patient list (see below), with why it is missing.
+    const kcbbd = await scanBhytHisKcbbd(info, his, visit);
+    refreshHis();
+    // Visit date ("Đến khám", NGAYTIEPNHAN) outside the HIS card validity
+    // (THOIGIAN, "Thời hạn thẻ"): an error, with or without the portal.
+    let visitCardChecked = false;
+    // Set when a card-change error (old card missing / visit spans two cards) is raised.
+    let cardChangeFlagged = false;
+    const checkVisitInCard = () => {
+      if (visitCardChecked) return;
+      const visit = info.visitDate || his.admissionDate || "";
+      const day = scanBhytDay(visit), start = scanBhytDay(his.hisCardStart), end = scanBhytDay(his.hisCardExpiry);
+      if (day === null || start === null || end === null) return;
+      visitCardChecked = true;
+      if (day < start || day > end) {
+        bad(`Ngày đến khám ${scanBhytDateOnly(visit)} nằm ngoài thời hạn thẻ trên HIS (${his.hisCardStart} – ${his.hisCardExpiry}).`,
+          day < start ? "Ngày đến khám trước ngày thẻ có giá trị." : "Ngày đến khám sau ngày thẻ hết hạn.");
+      }
+    };
+    // No usable portal result: list the HIS values, portal column left empty.
+    const hisOnly = () => {
+      checkVisitInCard();
+      row("Mã thẻ", his.card, "");
+      row("Họ tên", his.name, "");
+      row("Ngày sinh", his.dob, "");
+      row("Giới tính", his.gender, "");
+      row("Nơi ĐK KCB BĐ (MA_KCBBD)", kcbbd.value || kcbbd.miss, "");
+      row("KV/K", his.kv, "");
+      row("Thời hạn thẻ", hisPeriod, "");
+      return { errors, infos, rows };
+    };
+    if (scanBhytPortalDown) {
+      note(scanBhytPortalDown);
+      return hisOnly();
+    }
+    const tWait = Date.now();
+    const lookup = await lookupPromise;
+    try { console.info(`[Scan] BHYT ${info.caseNo}: chờ cổng thêm ${((Date.now() - tWait) / 1000).toFixed(1)} s sau khi HIS xong`); } catch (_) {}
+    // THOIGIAN may still be on its way: wait a little for it.
+    refreshHis();
+    for (let waited = 0; !(his.hisCardStart && his.hisCardExpiry) && waited < 3000 && !scanStopRequested; waited += 200) {
+      await scanSleep(200);
+      refreshHis();
+    }
+    if (!lookup.ok) {
+      bad(`Không tra cứu được cổng BHYT: ${lookup.message}`);
+      return hisOnly();
+    }
+    const data = lookup.result || {};
+    if (!data.resultFound || !data.responseMatchesPatient) {
+      const detail = data.needsCaptcha ? "Cổng đang yêu cầu xác thực bổ sung."
+        : data.portalNotice ? `Thông báo đang hiện trên cổng: ${data.portalNotice}` : "";
+      bad(data.staleResult
+        ? `Cổng chưa trả thông báo khớp mã thẻ đang tra (đã thử ${SCAN_BHYT_ATTEMPTS} lần): kiểm tra trực tiếp trên cổng.`
+        : "Chưa xác định được kết quả của đúng mã thẻ đang tra: kiểm tra trực tiếp trên cổng.",
+        detail);
+      return hisOnly();
+    }
 
     // Card number.
     const portalCard = data.card || "";
@@ -4045,32 +4299,10 @@
       if (!ok) bad(`Giới tính HIS "${his.gender}" khác giới tính trên cổng "${data.gender}".`);
     } else row("Giới tính", his.gender, data.gender || "không có trong thông báo");
 
-    // Nơi ĐK KCB BĐ: MA_KCBBD ("(6) Mã" on the bill) from the HIS patient list
-    // (ajaxExecuteQueryPaging), by case number or card number, vs the portal's
-    // "Nơi KCBBĐ". TKNOICD is not used: it is the transfer-from facility ("Mã
-    // CSKCB nơi người bệnh đến") and is only set for transferred patients.
-    // The portal may show a code with its name ("94001 - ..."), so a code found
-    // inside the other value also counts as a match.
-    const hisKcbbd = () => scanKcbbdByKey.get(scanBhytNorm(info.caseNo)) ||
-      scanKcbbdByKey.get(scanBhytNorm(his.caseNo)) ||
-      (his.patientId ? scanKcbbdByKey.get("BN:" + scanBhytNorm(his.patientId)) : "") ||
-      scanKcbbdByKey.get(scanKcbbdCardKey(his.card)) ||
-      his.registrationFacility || "";
-    // main.js keeps every MA_KCBBD it saw (the list may load before this script);
-    // for a patient it has not seen, it reads the patient list again once.
-    const kcbbdCase = scanBhytNorm(info.caseNo || his.caseNo);
-    scanKcbbdStatus.delete(kcbbdCase);
-    if (!hisKcbbd()) window.postMessage({ __scanMsgV1: true, type: "KCBBD_ASK",
-      want: { caseNo: info.caseNo || his.caseNo || "", patientId: his.patientId || "", card: his.card || "" } }, "*");
-    while (visit && !visit.ready && !scanStopRequested) await scanSleep(100);
-    for (let waited = 0; !hisKcbbd() && !scanKcbbdStatus.has(kcbbdCase) && waited < 16000 && !scanStopRequested; waited += 200) await scanSleep(200);
-    const hisFacility = hisKcbbd();
-    const kcbbdMiss = (() => {
-      const st = scanKcbbdStatus.get(kcbbdCase);
-      if (st && st.status === "noList") return "chưa đọc được MA_KCBBD: HIS chưa tải danh sách bệnh nhân từ khi mở trang (bấm Tìm kiếm trên danh sách rồi quét lại)";
-      if (st && st.status === "notInList") return `chưa đọc được MA_KCBBD: danh sách bệnh nhân (${st.listRows} dòng) không có bệnh nhân này hoặc MA_KCBBD trống`;
-      return "chưa đọc được MA_KCBBD (mở lại danh sách bệnh nhân trên HIS)";
-    })();
+    // Nơi ĐK KCB BĐ: MA_KCBBD vs the portal's "Nơi KCBBĐ". The portal may show
+    // a code with its name ("94001 - ..."), so a code found inside the other
+    // value also counts as a match.
+    const hisFacility = kcbbd.value, kcbbdMiss = kcbbd.miss;
     if (hisFacility && data.registrationFacility) {
       const a = scanBhytNorm(hisFacility), b = scanBhytNorm(data.registrationFacility);
       const shorter = a.length <= b.length ? a : b, longer = shorter === a ? b : a;
@@ -4093,7 +4325,6 @@
     }
 
     // Card validity: HIS THOIGIAN vs portal.
-    const hisPeriod = his.cardValidityPeriod || [his.hisCardStart, his.hisCardExpiry].filter(Boolean).join(" – ");
     const portalPeriod = [data.cardStart, data.cardExpiry].filter(Boolean).join(" – ");
     if (his.hisCardStart && his.hisCardExpiry && data.cardStart && data.cardExpiry) {
       const ok = scanBhytDateOnly(his.hisCardStart) === scanBhytDateOnly(data.cardStart) &&
@@ -4120,6 +4351,8 @@
         (nc.facilityCode ? `, KCB BĐ ${nc.facilityCode}` : "") + ".",
         twoCards ? `Thẻ trong thông báo chính: ${data.mainCard.card} (${data.mainCard.start || "?"} – ${data.mainCard.expiry || "?"}).` : "");
     }
+    // Admission = "Đến khám" (NGAYTIEPNHAN from the patient list row), else HIS's detail.
+    if (info.visitDate) his.admissionDate = info.visitDate;
     const admit = scanBhytDay(his.admissionDate), discharge = scanBhytDay(his.dischargeDate);
     if (twoCards && admit !== null && discharge !== null) {
       const oldStart = scanBhytDay(data.mainCard.start), oldEnd = scanBhytDay(data.mainCard.expiry);
@@ -4127,6 +4360,7 @@
       const inRange = (d, s, e) => d !== null && s !== null && e !== null && d >= s && d <= e;
       if (admit <= discharge && newStart !== null && admit < newStart && discharge >= newStart &&
           inRange(admit, oldStart, oldEnd) && inRange(discharge, newStart, newEnd)) {
+        cardChangeFlagged = true;
         bad(`Đợt điều trị vắt qua thời điểm đổi thẻ: vào viện ${his.admissionDate} thuộc thẻ cũ ${data.mainCard.card}, ra viện ${his.dischargeDate} thuộc thẻ mới ${data.newCard.card}. HIS cần ghi nhận đủ cả 2 mã thẻ.`,
           `Thẻ cũ ${data.mainCard.card}: ${data.mainCard.start} – ${data.mainCard.expiry}\nThẻ mới ${data.newCard.card}: ${data.newCard.start} – ${data.newCard.expiry}\nHIS trả về mã ${his.card}.`);
       }
@@ -4137,10 +4371,14 @@
     if (!twoCards && admit !== null && discharge !== null && data.cardStart && data.cardExpiry) {
       const start = scanBhytDay(data.cardStart), end = scanBhytDay(data.cardExpiry);
       if (cardOk && start !== null && end !== null && admit < start && discharge >= start && discharge <= end) {
+        cardChangeFlagged = true;
         bad(`Có thể thiếu mã thẻ cũ: vào viện ${his.admissionDate} trước hạn thẻ hiện tại (${data.cardStart} – ${data.cardExpiry}), ra viện ${his.dischargeDate} trong hạn. Kiểm tra lịch sử thẻ trên cổng.`);
       }
     }
     if (data.needsCaptcha) note("Cổng yêu cầu xác thực bổ sung: cần thao tác thủ công.");
+    // The card-change error already explains a visit date outside the HIS card
+    // ("Ngày đến khám ... nằm ngoài thời hạn thẻ"): do not report it twice.
+    if (!cardChangeFlagged) checkVisitInCard();
     return { errors, infos, rows };
   }
 
@@ -4172,12 +4410,13 @@
       .filter(Boolean).join("|");
   }
   function scanGridSignature() {
-    const grid = document.getElementById("grdLS");
+    const grid = scanListGrid();
     if (!grid) return "";
     return Array.from(grid.querySelectorAll("tr.jqgrow")).map(r => `${r.id}:${(r.textContent || "").length}`).join(",");
   }
   function scanGridLoading() {
-    const el = document.getElementById("load_grdLS");
+    const grid = scanListGrid();
+    const el = document.getElementById(`load_${grid ? grid.id : "grdLS"}`);
     return !!el && getComputedStyle(el).display !== "none";
   }
   // Wait for #grdLS to reload after a search: done when the jqGrid loading box
@@ -4251,6 +4490,7 @@
     const code = raw.slice(-10);
     if (code.length < 10) { scanStatus.textContent = "Nhập Mã thẻ BHYT (ít nhất 10 ký tự cuối)."; return; }
     scanStore("hthScanBhyt", raw);
+    scanSetPaused(null);
     scanRunning = true; scanStopRequested = false;
     scanStartBtn.disabled = true; scanBhytBtn.disabled = true; scanStopBtn.disabled = false;
     scanResults = []; scanSummaryPrefix = ""; scanLookup = null; scanRenderResults();
@@ -4307,52 +4547,84 @@
   // options (QUÉT theo BHYT): patients = the rows to scan (ignores "Quét bệnh
   // nhân"), personKey = one identity for all of them (repeat-test rules),
   // lookup = the note shown above the results.
+  // options.resume: carry on a paused scan (same patients, same checks, keep
+  // the results already collected) from the patient it stopped on.
   async function scanAllPatients(options = {}) {
     if (scanRunning) return;
-    scanLookup = options.lookup || null;
-    const allPatients = options.patients || scanPatientRows();
-    if (!allPatients.length) {
-      scanStatus.textContent = "Không tìm thấy danh sách bệnh nhân (lưới #grdLS). Hãy mở màn hình danh sách bệnh nhân rồi thử lại.";
-      return;
-    }
-    // "Chỉ quét bệnh nhân đã chọn": rows ticked (multiselect) or highlighted in the list.
-    const inScope = options.patients ? allPatients
-      : (scanScope() === "selected" ? allPatients.filter(p => scanIsRowSelected(p.row)) : allPatients);
-    if (!inScope.length) {
-      scanStatus.textContent = "Chưa chọn bệnh nhân nào trong danh sách HIS. Hãy chọn (hoặc tích) bệnh nhân cần quét, hoặc chuyển sang \"Tất cả\".";
-      return;
-    }
-    // Patients admitted more than SCAN_SKIP_OLDER_MONTHS ago are not scanned.
-    const skipCutoff = scanSkipCutoff();
-    const patients = inScope.filter(p => !scanIsTooOld(p.visitDate, skipCutoff))
-      .map((p, i) => ({ ...p, index: i, patientKey: options.personKey || p.patientKey }));
-    const skippedOld = inScope.length - patients.length;
-    const skippedText = skippedOld ? ` · bỏ qua ${skippedOld} ca vào viện trước ${scanFormatDay(skipCutoff)}` : "";
-    if (!patients.length) {
-      scanStatus.textContent = `Không có ca nào để quét${skippedText}.`;
-      scanResults = []; scanRenderResults();
-      return;
-    }
-    const scanned = { xn: scanTabXn.checked, thuoc: scanTabThuoc.checked, pttt: scanTabPttt.checked, bhyt: scanTabBhyt.checked };
-    if (scanned.bhyt) {
-      const ping = await scanBhytPing();
-      if (!ping.ok) {
-        scanStatus.textContent = ping.error || "Đã bật BHYT nhưng chưa thấy trang cổng giám định BHYT (Thông tuyến khám chữa bệnh) đang mở. Hãy mở và đăng nhập trang đó trong một tab khác rồi quét lại, hoặc tắt BHYT.";
+    const resume = options.resume ? scanPaused : null;
+    if (options.resume && !resume) return;
+    let patients, skippedText, scanned, startPos;
+    if (resume) {
+      ({ patients, skippedText, scanned } = resume);
+      startPos = resume.nextPos;
+      scanLookup = resume.lookup;
+      // Same checks as when the scan started, even if the boxes were changed
+      // while paused (the tab walk reads these boxes).
+      scanTabXn.checked = scanned.xn; scanTabThuoc.checked = scanned.thuoc;
+      scanTabPttt.checked = scanned.pttt; scanTabBhyt.checked = scanned.bhyt;
+      scanSyncBhytRow();
+    } else {
+      scanLookup = options.lookup || null;
+      const allPatients = options.patients || scanPatientRows();
+      if (!allPatients.length) {
+        scanStatus.textContent = "Không tìm thấy danh sách bệnh nhân (lưới #grdLS). Hãy mở màn hình danh sách bệnh nhân rồi thử lại.";
         return;
       }
+      // "Chỉ quét bệnh nhân đã chọn": rows ticked (multiselect) or highlighted in the list.
+      const inScope = options.patients ? allPatients
+        : (scanScope() === "selected" ? allPatients.filter(p => scanIsRowSelected(p.row)) : allPatients);
+      if (!inScope.length) {
+        scanStatus.textContent = "Chưa chọn bệnh nhân nào trong danh sách HIS. Hãy chọn (hoặc tích) bệnh nhân cần quét, hoặc chuyển sang \"Tất cả\".";
+        return;
+      }
+      // Patients admitted more than SCAN_SKIP_OLDER_MONTHS ago are not scanned.
+      const skipCutoff = scanSkipCutoff();
+      patients = inScope.filter(p => !scanIsTooOld(p.visitDate, skipCutoff))
+        .map((p, i) => ({ ...p, index: i, patientKey: options.personKey || p.patientKey }));
+      const skippedOld = inScope.length - patients.length;
+      skippedText = skippedOld ? ` · bỏ qua ${skippedOld} ca vào viện trước ${scanFormatDay(skipCutoff)}` : "";
+      if (!patients.length) {
+        scanStatus.textContent = `Không có ca nào để quét${skippedText}.`;
+        scanSetPaused(null);
+        scanResults = []; scanRenderResults();
+        return;
+      }
+      scanned = { xn: scanTabXn.checked, thuoc: scanTabThuoc.checked, pttt: scanTabPttt.checked, bhyt: scanTabBhyt.checked };
+      startPos = 0;
+    }
+    // Portal not open: still scan and show the HIS side of BHYT, portal column empty.
+    scanBhytPortalDown = "";
+    if (scanned.bhyt) {
+      const ping = await scanBhytPing();
+      if (!ping.ok) scanBhytPortalDown = ping.error || "Chưa thấy trang cổng giám định BHYT (Thông tuyến khám chữa bệnh) đang mở: chỉ hiện thông tin HIS. Mở và đăng nhập trang đó trong một tab khác rồi quét lại để đối chiếu.";
     }
     if (scanRunning) return;
-    scanRunning = true; scanStopRequested = false; scanResults = []; scanSummaryPrefix = "";
-    scanBhytCache = new Map();
+    scanRunning = true; scanStopRequested = false; scanSummaryPrefix = ""; scanPauseReason = "";
+    if (resume) scanResults = resume.results;
+    else { scanResults = []; scanBhytCancelQueued(); scanBhytCache = new Map(); }
+    scanSetPaused(null);
+    // Portal "thread": look every remaining visit up on the portal in order,
+    // independently of the HIS loop below.
+    if (scanned.bhyt && !scanBhytPortalDown) scanBhytQueueAhead(patients.slice(startPos));
     // While scanning, also open phiếu lists whose tab is not on screen.
-    scanMainCall({ action: "setScanMode", value: true, kinds: { dvkt: scanTabXn.checked || scanTabThuoc.checked || scanTabPttt.checked, drug: scanTabThuoc.checked, lab: scanTabXn.checked } });
+    scanKeepTabs(true);
+    scanMainCall({ action: "setScanMode", value: true, kinds: { dvkt: scanned.xn || scanned.thuoc || scanned.pttt, drug: scanned.thuoc, lab: scanned.xn } });
     scanStartBtn.disabled = true; scanBhytBtn.disabled = true; scanStopBtn.disabled = false;
     scanRenderResults();
-    const grid = document.getElementById("grdLS");
-    const originalRow = grid && grid.querySelector("tr.jqgrow.ui-state-highlight, tr.jqgrow[aria-selected='true']");
-    const originalInfo = originalRow ? scanRowInfo(originalRow, -1) : null;
+    let originalInfo = resume ? resume.originalInfo : null;
+    if (!resume) {
+      const grid = scanListGrid();
+      const originalRow = grid && grid.querySelector("tr.jqgrow.ui-state-highlight, tr.jqgrow[aria-selected='true']");
+      originalInfo = originalRow ? scanRowInfo(originalRow, -1) : null;
+    }
+    // Position in patients; on pause it is the first patient not yet scanned
+    // (the one interrupted mid-way has no result yet and is scanned again).
+    let pos = startPos;
+    // Cases HIS failed to open in a row, and where the run of failures started.
+    let openFailStreak = 0, openFailFrom = -1;
     try {
-      for (const info of patients) {
+      for (; pos < patients.length; pos++) {
+        const info = patients[pos];
         if (scanStopRequested) break;
         const row = scanResolveRow(info);
         if (!row) continue;
@@ -4365,6 +4637,9 @@
         // reported under this one. Keep it only when this visit is already open
         // and its data was collected for it (HIS may not reload it on re-click).
         const keepLoaded = alreadySelected && info.caseNo && currentVisibleEncounter === info.caseNo;
+        // Resuming on the patient the pause interrupted: its phiếu opened before
+        // the pause are still loaded, so they are not opened again.
+        const resumeVisit = !!(resume && pos === startPos && keepLoaded);
         if (!keepLoaded) {
           clearStoredRows();
           clearAuditData();
@@ -4374,15 +4649,48 @@
         if (info.caseNo) { currentVisibleEncounter = info.caseNo; currentCase = info.caseNo; }
         scanVisitTabs = [];
         // New visit: its phiếu lists may be opened again (once each).
-        await scanMainCall({ action: "scanVisitStart" });
+        await scanMainCall({ action: "scanVisitStart", resume: resumeVisit });
         // The patient list lives on the "Danh sách" tab; go back to it before
         // selecting the next patient (the previous one ended on the Thuốc tab).
         if (scanAnyDataTab()) {
           const listTab = scanFindHisTab(SCAN_LIST_TAB);
           if (listTab) { scanClickHisTab(listTab); await scanSleep(300); }
         }
-        const selection = await scanSelectPatient(scanResolveRow(info) || row, info, previousKey, alreadySelected);
+        let selection = await scanSelectPatient(scanResolveRow(info) || row, info, previousKey, alreadySelected);
         if (scanStopRequested) break;
+        // HIS refused to open the case ("Đã có lỗi xảy ra khi xử lý dữ liệu..."):
+        // often a passing HIS/server error, so wait a little and try once more.
+        if (!selection.switched && !selection.gridMissing) {
+          try { console.warn(`[Scan] HIS không mở được ca ${info.caseNo || info.label} (tab ${document.visibilityState}): ${selection.error || ""}. Thử lại sau 3 giây.`); } catch (_) {}
+          scanStatus.textContent = `Đang quét ${info.index + 1}/${patients.length}: ${info.label} · HIS báo lỗi khi mở ca, thử lại…`;
+          await scanSleep(3000);
+          if (scanStopRequested) break;
+          selection = await scanSelectPatient(scanResolveRow(info) || row, info, previousKey, false);
+          if (scanStopRequested) break;
+        }
+        if (selection.gridMissing) {
+          // Not this patient's fault: pause here so "Tiếp tục" retries it.
+          scanPauseReason = "HIS không hiện danh sách bệnh nhân (thường do tab HIS chạy nền bị trình duyệt làm chậm). Mở lại tab HIS rồi bấm \"Tiếp tục\"";
+          scanStopRequested = true;
+          break;
+        }
+        if (!selection.switched) {
+          if (!openFailStreak) openFailFrom = pos;
+          openFailStreak++;
+          // Two cases in a row: HIS itself is failing, not these cases. Pause
+          // instead of marking every remaining patient "Không mở được ca";
+          // "Tiếp tục" starts again from the first case of the failing run.
+          if (openFailStreak >= 2) {
+            for (let i = scanResults.length - 1; i >= 0 && scanResults[i].openFailed && scanResults[i].pos >= openFailFrom; i--) scanResults.pop();
+            pos = openFailFrom;
+            scanPauseReason = `HIS báo lỗi khi mở ${openFailStreak} ca liên tiếp (${selection.error || "không rõ lý do"})`;
+            scanStopRequested = true;
+            scanRenderResults();
+            break;
+          }
+        } else {
+          openFailStreak = 0;
+        }
         let findings;
         let bhytResult = null;
         if (!selection.switched) {
@@ -4420,24 +4728,30 @@
         const baseErrors = [...findings.errors, ...(bhytResult ? bhytResult.errors : [])];
         scanResults.push({ index: info.index, label: info.label, caseNo: info.caseNo, rowId: info.rowId, row: info.row,
           patientKey: info.patientKey, visitDate: info.visitDate, scanned, lists: scanVisitLists.slice(), tabs: scanVisitTabs.slice(), ...findings,
-          errors: baseErrors, baseErrors, baseInfos: bhytResult ? bhytResult.infos : [], bhytRows: bhytResult ? bhytResult.rows : null,
-          repeatTests: findings.repeatTests || [] });
+          errors: baseErrors, baseErrors, baseInfos: [...(findings.infos || []), ...(bhytResult ? bhytResult.infos : [])], bhytRows: bhytResult ? bhytResult.rows : null,
+          repeatTests: findings.repeatTests || [], pos, openFailed: !selection.switched });
         scanApplyRepeatTestRules();
         scanRenderResults();
       }
     } finally {
-      scanSummaryPrefix = `${scanStopRequested ? "Đã dừng" : "Hoàn tất"}: ${scanResults.length}/${patients.length} ca đã quét${skippedText}`;
+      const paused = scanStopRequested && pos < patients.length;
+      if (paused) scanSetPaused({ patients, nextPos: pos, skippedText, scanned, lookup: scanLookup, originalInfo, results: scanResults });
+      scanSummaryPrefix = paused
+        ? `${scanPauseReason ? scanPauseReason + ". " : ""}Đã tạm dừng (còn ${patients.length - pos} ca, bấm "Tiếp tục" để quét tiếp): ${scanResults.length}/${patients.length} ca đã quét${skippedText}`
+        : `Hoàn tất: ${scanResults.length}/${patients.length} ca đã quét${skippedText}`;
       scanUpdateSummary();
       scanRunning = false;
+      scanBhytCancelQueued();
       scanForcedEncounter = "";
       scanMainCall({ action: "setScanMode", value: false });
+      scanKeepTabs(false);
       scanStartBtn.disabled = false; scanStopBtn.disabled = true; scanSyncBhytRow();
       // Back to the patient list, then to the patient selected before the scan.
       if (scanAnyDataTab()) {
         const listTab = scanFindHisTab(SCAN_LIST_TAB);
         if (listTab) scanClickHisTab(listTab);
       }
-      if (!scanStopRequested && originalInfo) {
+      if (!paused && originalInfo) {
         const back = scanResolveRow(originalInfo);
         if (back) scanClickRow(back);
       }
@@ -4465,8 +4779,9 @@
     if (!button) return;
     const act = button.dataset.scanAct;
     if (act === "start") scanAllPatients();
+    else if (act === "resume") scanAllPatients({ resume: true });
     else if (act === "bhyt") scanByBhyt(scanBhytInput.value);
-    else if (act === "stop") { scanStopRequested = true; scanStatus.textContent = "Đang dừng..."; }
+    else if (act === "stop") { scanStopRequested = true; scanStatus.textContent = "Đang tạm dừng..."; }
     else if (act === "close") scanPanel.style.display = "none";
   });
 })();

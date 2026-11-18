@@ -36,6 +36,16 @@
         "https://gdbhyt.baohiemxahoi.gov.vn/ThongTuyenLSKCB/Index*"
       ],
       "js": [
+        "portal_main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://gdbhyt.baohiemxahoi.gov.vn/ThongTuyenLSKCB/Index*"
+      ],
+      "js": [
         "bhyt_portal.js"
       ],
       "run_at": "document_idle"

@@ -7,6 +7,37 @@
   window.__scanMainHookedV1 = true;
   try { console.info("[Scan] main.js đã chạy (bản có MA_KCBBD)."); } catch (_) {}
 
+  // window.jQuery / window.$ can end up pointing at another jQuery copy (e.g.
+  // one loaded by a HIS dialog or frame). That copy searches its own document,
+  // so $("#grdLS") came back empty while the patient list was on screen
+  // ("Không thấy lưới #grdLS"). Remember every jQuery seen (the page's own is
+  // there first) and use one that searches this page.
+  const hthJqSeen = [];
+  function hthNoteJq() {
+    for (const jq of [window.jQuery, window.$]) {
+      if (typeof jq === "function" && jq.fn && !hthJqSeen.includes(jq)) hthJqSeen.push(jq);
+    }
+  }
+  document.addEventListener("DOMContentLoaded", hthNoteJq);
+  window.addEventListener("load", hthNoteJq);
+  function hthPageJq() {
+    hthNoteJq();
+    let any = null;
+    for (const jq of hthJqSeen) {
+      try {
+        if (!jq.fn || !jq.fn.jqGrid) continue;
+        if (!any) any = jq;
+        if (jq("body")[0] === document.body) return jq;
+      } catch (_) {}
+    }
+    return any || window.jQuery || window.$;
+  }
+  // The patient list grid, found by id in this document (not through jQuery).
+  // content.js sends the table id with each request (some list screens do not
+  // use #grdLS); the last one is kept for reads that come without a request.
+  let hthListGridId = "grdLS";
+  const hthListGrid = jq => jq(document.getElementById(hthListGridId) || document.getElementById("grdLS") || []);
+
   // ---- Keep QUÉT running while the user is on another tab or app ----
   // A hidden page's timers are throttled by Chrome (aligned to 1 s, then to
   // 1 per minute after 5 min). Our own waits already sleep through a Worker,
@@ -292,9 +323,9 @@
     // The selected patient grid already contains the admission/discharge values.
     // Read them without changing HIS state; hidden ID inputs remain the encounter key.
     try {
-      const jq = window.jQuery || window.$;
+      const jq = hthPageJq();
       if (jq && jq.fn && jq.fn.jqGrid) {
-        const grid = jq("#grdLS");
+        const grid = hthListGrid(jq);
         const selected = grid.jqGrid("getGridParam", "selrow");
         if (selected) {
           const row = grid.jqGrid("getRowData", selected) || {};
@@ -534,8 +565,9 @@
       const registrationFacility = String(pickField(r, ["MA_KCBBD", "MA_DKBD", "MADKBD", "NOIKCBBD", "NOI_DANG_KY_KCB_BAN_DAU", "MA_CSKCB_BD", "MACSKCBBD", "NOIDANGKYKCBBD", "TENNOIDKBD", "TEN_CSKCB_DKBD"].map(normalizeKey)) || "").trim();
       // TKNOICD (NT.005): the HIS "Nơi KCBBĐ" code, compared with the BHYT portal in QUÉT.
       const tkNoiCd = String(pickField(r, ["TKNOICD"].map(normalizeKey)) || "").trim();
-      const cardValidity = parseCardValidityPeriod(pickField(r, ["THOIGIAN", "THOI_GIAN", "THOIGIANTHE", "THOIHANBHYT", "THOIGIANBHYT"].map(normalizeKey)));
-      const admissionDate = normalizeDateOnly(pickField(r, ["THOIGIANVAOVIEN", "THOIGIAN_VAO_VIEN", "NGAYVAOVIEN", "NGAY_VAO_VIEN", "NGAYVAO", "NGAY_VAO", "NGAYNHAPVIEN", "NGAY_NHAP_VIEN"].map(normalizeKey)));
+      const cardValidity = parseCardValidityPeriod(pickField(r, ["THOIGIAN", "THOI_GIAN", "THOIHANTHE", "THOI_HAN_THE", "THOIGIANTHE", "THOIHANBHYT", "THOIGIANBHYT"].map(normalizeKey)));
+      // "Đến khám" on the bill = NGAYTIEPNHAN; never NGAYVAOKHOA (entering the department).
+      const admissionDate = normalizeDateOnly(pickField(r, ["NGAYTIEPNHAN", "NGAY_TIEP_NHAN", "THOIGIANTIEPNHAN", "THOIGIANVAOVIEN", "THOIGIAN_VAO_VIEN", "NGAYVAOVIEN", "NGAY_VAO_VIEN", "NGAYVAO", "NGAY_VAO", "NGAYNHAPVIEN", "NGAY_NHAP_VIEN"].map(normalizeKey)));
       const dischargeDate = normalizeDateOnly(pickField(r, ["THOIGIANRAVIEN", "THOIGIAN_RA_VIEN", "NGAYRAVIEN", "NGAY_RA_VIEN", "NGAYRA", "NGAY_RA", "NGAYXUATVIEN", "NGAY_XUAT_VIEN"].map(normalizeKey)));
       if (!card || !name || !dob || (!caseNo && !patientId)) continue;
       window.postMessage({
@@ -665,8 +697,11 @@
       }
       if (pendingResponseTexts.length) scheduleResponseQueue();
     };
-    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 80 });
-    else window.setTimeout(() => run(null), 30);
+    // A hidden tab gets no idle periods: requestIdleCallback then only fires on
+    // its timeout, a throttled timer (up to 1 per minute). There is nobody to keep
+    // the page smooth for, so use setTimeout, which runs from a Worker during QUÉT.
+    if (document.visibilityState === "hidden" || typeof window.requestIdleCallback !== "function") window.setTimeout(() => run(null), 0);
+    else window.requestIdleCallback(run, { timeout: 80 });
   }
   function queueResponseText(rawText, url, requestContext, queryName = "") {
     if (!rawText) return;
@@ -1265,6 +1300,10 @@
   // Xét nghiệm -> phiếu DVKT (DSPHIEU...), Thuốc -> đơn thuốc (DSTHUOC...).
   // lab: also load each phiếu DVKT's results (NT.024.2) for the albumin check.
   let hthScanKinds = { dvkt: true, drug: true, lab: false };
+  // QUÉT: phiếu rows already opened (fully loaded) per list of the visit being
+  // scanned. A paused scan resumed on the same visit skips them instead of
+  // opening the whole list again. Cleared when QUÉT moves to another visit.
+  const hthScanOpened = new Map();
   const hthScanKindOn = kind => /thuốc/i.test(String(kind || "")) ? hthScanKinds.drug : hthScanKinds.dvkt;
   function hthScanEnqueue(job) {
     if (!hthScanKindOn(job.kind)) return false;
@@ -1432,7 +1471,7 @@
   // onlyTableId: look only at that grid (used while walking, so the walk stays on
   // the phiếu list it started on).
   function hthFindPhieuGrid(job, onlyTableId) {
-    const jq = window.jQuery || window.$;
+    const jq = hthPageJq();
     if (!jq || !jq.fn || !jq.fn.jqGrid) return null;
     const ids = new Set(job.phieu.flatMap(p => [p.id, p.altId]).filter(Boolean));
     const soPhieu = new Set(job.phieu.map(p => p.soPhieu).filter(Boolean));
@@ -1470,7 +1509,7 @@
     return best;
   }
   function hthSelectGridRow(grid, tr) {
-    const jq = window.jQuery || window.$;
+    const jq = hthPageJq();
     try { if (grid.jqGrid("getGridParam", "multiselect")) grid.jqGrid("resetSelection"); } catch (_) {}
     const cell = Array.from(tr.cells).find(td => !/_cb$|_rn$/.test(td.getAttribute("aria-describedby") || "")) || tr.cells[0];
     if (cell) jq(cell).trigger("click");
@@ -1486,6 +1525,14 @@
     // row redrawn after that (e.g. 4 of 5 xét nghiệm opened). Track rows by id and
     // look the grid up again before each click, until no unopened row is left.
     const openedIds = new Set();
+    // Phiếu opened by an earlier (paused) pass of QUÉT on this visit.
+    let doneBefore = null;
+    if (hthScanMode) {
+      doneBefore = hthScanOpened.get(job.signature);
+      if (!doneBefore) { doneBefore = new Set(); hthScanOpened.set(job.signature, doneBefore); }
+    }
+    const alreadyDone = id => !!(doneBefore && doneBefore.has(id));
+    const openedCount = () => openedIds.size + (doneBefore ? [...doneBefore].filter(id => !openedIds.has(id)).length : 0);
     let total = Math.max(found.rows.length, job.phieu.length);
     let lastId = "";
     hthEmit({ type: "start", key: job.key, kind: job.kind, total });
@@ -1500,18 +1547,20 @@
       if (!current) break;
       grid = current.grid; table = current.table; hthWalkTable = table;
       total = Math.max(total, current.rows.length);
-      const tr = current.rows.find(row => row.id && !openedIds.has(row.id));
+      const tr = current.rows.find(row => row.id && !openedIds.has(row.id) && !alreadyDone(row.id));
       if (!tr) break;
       openedIds.add(tr.id);
       lastId = tr.id;
       hthSelectGridRow(grid, tr);
       await hthWaitHisIdle();
-      hthEmit({ type: "progress", key: job.key, kind: job.kind, done: openedIds.size, total });
+      // Counted as loaded only when the wait was not cut short by a pause.
+      if (doneBefore && !hthWalkAbort) doneBefore.add(tr.id);
+      hthEmit({ type: "progress", key: job.key, kind: job.kind, done: openedCount(), total });
     }
     // QUÉT with "Xét nghiệm" on: load the results of every phiếu DVKT of the
     // list (the "Kết quả xét nghiệm" tab) so content.js can check albumin.
     if (!hthWalkAbort && hthScanMode && hthScanKinds.lab && !/thuốc/i.test(job.kind)) await hthFetchLabResultsForJob(job);
-    const opened = openedIds.size;
+    const opened = openedCount();
     // Restore the user's earlier selection only if that row is still in this list.
     if (!hthWalkAbort && previous && previous !== lastId &&
         Array.from(table.querySelectorAll("tr.jqgrow")).some(tr => tr.id === previous)) {
@@ -1535,6 +1584,7 @@
     if (event.source !== window || !event.data || event.data.__scanRequestV1 !== true) return;
     const { id, action, rowId } = event.data;
     const reply = payload => window.postMessage({ __scanResponseV1: true, id, ...payload }, "*");
+    if (event.data.gridId && /^[\w-]+$/.test(event.data.gridId)) hthListGridId = event.data.gridId;
     try {
       if (action === "setAutoWalk") {
         hthAutoWalk = !!event.data.value;
@@ -1556,6 +1606,8 @@
       if (action === "scanVisitStart") {
         hthScanWalked.clear();
         hthLabFetched.clear();
+        // resume: same visit as the paused pass, its data is still loaded.
+        if (!event.data.resume) hthScanOpened.clear();
         return reply({ ok: true });
       }
       if (action === "setScanMode") {
@@ -1573,10 +1625,13 @@
         return reply({ ok: true });
       }
       if (action === "walkStatus") return reply({ ok: true, running: !!hthWalkRunning, queued: hthWalkQueue.length });
-      const jq = window.jQuery || window.$;
+      const jq = hthPageJq();
       if (!jq || !jq.fn || !jq.fn.jqGrid) return reply({ ok: false, error: "Trang HIS không có jqGrid" });
-      const grid = jq("#grdLS");
-      if (!grid.length) return reply({ ok: false, error: "Không thấy lưới #grdLS" });
+      const grid = hthListGrid(jq);
+      if (!grid.length) {
+        try { console.warn(`[Scan] Không thấy lưới #${hthListGridId}: có trong trang=${!!document.getElementById(hthListGridId)}, jQuery ${jq.fn && jq.fn.jquery}, tab ${document.visibilityState}`); } catch (_) {}
+        return reply({ ok: false, error: `Không thấy lưới #${hthListGridId}` });
+      }
       // QUÉT theo BHYT: how many rows the search found vs. shown on this page,
       // and a bigger page size so every visit of the person is on one page.
       if (action === "gridInfo") {
