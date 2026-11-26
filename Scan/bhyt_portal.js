@@ -423,6 +423,30 @@
     return found.length ? found[0].slice(0, 400) : "";
   }
 
+  // The portal's answer for this card when it is not a card status the reader
+  // knows (e.g. wrong birth date / name for this card): the smallest visible
+  // notice-like box that names the card, from "Thông báo" on, cut before the
+  // visit-history sections. "" when the page does not name the card.
+  function cardNoticeText(requestedCardNorm) {
+    if (!requestedCardNorm) return "";
+    const mentionsCard = el => String(el && el.textContent || "").toLowerCase().replace(/[^a-z0-9]/g, "").includes(requestedCardNorm);
+    if (!mentionsCard(document.body)) return "";
+    const helperSelector = "#his-time-helper, #his-bhyt-result, #his-bhyt-helper-trigger";
+    const stops = /lịch\s*sử\s*khám\s*chữa\s*bệnh|thông\s*tin\s*cùng\s*chi\s*trả|thông\s*tin\s*kiểm\s*tra\s*thẻ|quản\s*lý\s*thông\s*tuyến/i;
+    const found = [];
+    for (const el of document.querySelectorAll("fieldset, [role='alert'], .alert, [id*='thongbao' i], [class*='thongbao' i], [id*='notification' i], [class*='notification' i], .modal-body, .toast, .swal2-content, .swal2-html-container")) {
+      if (!mentionsCard(el) || !visible(el) || el.closest(helperSelector)) continue;
+      let txt = String(el.innerText || el.textContent || "").normalize("NFC").replace(/\s+/g, " ").trim();
+      const start = txt.search(/thông\s*báo/i);
+      if (start > 0) txt = txt.slice(start);
+      const stop = txt.search(stops);
+      if (stop > 24) txt = txt.slice(0, stop).trim();
+      if (txt && normalize(txt).includes(requestedCardNorm) && txt.length <= 1500) found.push(txt);
+    }
+    found.sort((a, b) => a.length - b.length);
+    return found.length ? found[0].slice(0, 600) : "";
+  }
+
   // Lookups come in a run during QUÉT: keep the page awake (portal_main.js)
   // from the first lookup until 3 minutes after the last one.
   let awakeOffTimer = null;
@@ -485,6 +509,7 @@
     const started = Date.now();
     let lastValidSignature = "";
     let stableValidPolls = 0;
+    let lastOtherNotice = "", otherNoticeSince = 0;
     const timer = startPoll(() => {
       if (currentLookupId !== lookupSequence) {
         clearPoll(timer);
@@ -506,6 +531,38 @@
       if (validCurrentResult && signature && signature === lastValidSignature) stableValidPolls++;
       else stableValidPolls = validCurrentResult && signature ? 1 : 0;
       lastValidSignature = signature;
+      // The portal answered for this card, but not with a card status the
+      // reader parses (an error such as a wrong birth date): once that text
+      // has stayed the same for 2 s, report it instead of timing out and
+      // retrying (the answer would be the same).
+      if (!validCurrentResult && elapsed >= 4000) {
+        const other = cardNoticeText(normalize(patient.card));
+        if (other && other === lastOtherNotice) {
+          if (!otherNoticeSince) otherNoticeSince = Date.now();
+        } else otherNoticeSince = 0;
+        lastOtherNotice = other;
+        if (other && otherNoticeSince && Date.now() - otherNoticeSince >= 2000) {
+          clearPoll(timer);
+          if (activeLookupTimer === timer) activeLookupTimer = null;
+          chrome.runtime.sendMessage({
+            type: "BHYT_RESULT",
+            sourceTabId: message.sourceTabId,
+            requestedPatient: patient,
+            result: {
+              notification: other,
+              newCard: null, mainCard: null, card: "", name: "", dob: "", gender: "",
+              registrationFacility: "", kv: "", cardStart: "", cardExpiry: "",
+              daysRemaining: null, expiryStatus: "unknown",
+              expiryMessage: "Chưa xác nhận được thời hạn thẻ từ lượt tra cứu hiện tại",
+              resultFound: false, responseMatchesPatient: false, staleResult: false,
+              unrecognizedNotice: other, portalNotice: other,
+              requestedPatient: snapshot.requestedPatient || patient,
+              needsCaptcha: false
+            }
+          });
+          return;
+        }
+      }
       // Same reply on 2 polls in a row (~0.3 s) is enough.
       if (elapsed >= 300 && stableValidPolls >= 2) {
         clearPoll(timer);
@@ -519,7 +576,7 @@
       } else if (elapsed >= PORTAL_RESULT_TIMEOUT_MS) {
         clearPoll(timer);
         if (activeLookupTimer === timer) activeLookupTimer = null;
-        const portalNotice = visibleNoticeText();
+        const portalNotice = cardNoticeText(normalize(patient.card)) || visibleNoticeText();
         // Do not send any fields from a mismatched/previous notification.
         chrome.runtime.sendMessage({
           type: "BHYT_RESULT",

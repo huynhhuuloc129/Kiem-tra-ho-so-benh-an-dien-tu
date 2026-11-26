@@ -1,7 +1,7 @@
 (() => {
   // Additive MAIN-world capture for the current encounter's diagnosis payload.
-  // This file only observes the existing NT.005.HSBA request; it does not issue
-  // additional HIS requests or modify the original request/response.
+  // It observes HIS's own NT.005.HSBA request without modifying it. QUÉT can
+  // also ask it to send NT.005.HSBA (diagnosis) or NT.005 (TKNOICD) itself.
   // Own guard: the older "Kiểm tra hồ sơ bệnh án điện tử" extension sets
   // __hthIcdCaptureV1 in the same page, which used to skip this whole file
   // (and with it the NT.005 / TKNOICD lookup) when both were installed.
@@ -65,6 +65,9 @@
   // a reply whose MAHOSOBENHAN is that case is accepted.
   const TKNOICD_SP = "NT.005";
   let spTemplate = null;
+  // Params of the last NT.005.HSBA call HIS made; QUÉT's own call reuses them
+  // with only the record id swapped.
+  let hsbaParams = null;
   function rememberSpTemplate(rpc, url, method, body, headers) {
     if (!rpc || normalize(rpc.func) !== "AJAXCALL_SP_O" || typeof body !== "string") return;
     spTemplate = { url, method: method || "POST", body, headers: Array.isArray(headers) ? headers.slice() : [] };
@@ -105,40 +108,41 @@
     }
   }
   // Same encoding as the template (JSON body, form postData or URL postData),
-  // with params switched to ["NT.005", id, 0].
-  function rewriteForTkNoiCd(text, id) {
+  // with params switched to the given ones (e.g. ["NT.005", id, 0]).
+  function rewriteRpcParams(text, params) {
     const rpc = parseJson(text);
     if (!rpc || !rpc.func || !Array.isArray(rpc.params)) return "";
-    return JSON.stringify({ ...rpc, func: "ajaxCALL_SP_O", params: [TKNOICD_SP, String(id), 0] });
+    return JSON.stringify({ ...rpc, func: "ajaxCALL_SP_O", params });
   }
-  function buildTkNoiCdRequest(template, id) {
+  function buildSpRequest(template, params) {
     let url = template.url, body = template.body, rewritten = false;
     try {
       const u = new URL(url, location.href);
       const postData = u.searchParams.get("postData");
-      const next = postData !== null ? rewriteForTkNoiCd(postData, id) : "";
+      const next = postData !== null ? rewriteRpcParams(postData, params) : "";
       if (next) { u.searchParams.set("postData", next); url = u.toString(); rewritten = true; }
     } catch (_) {}
     if (typeof body === "string" && body) {
-      const direct = rewriteForTkNoiCd(body, id);
+      const direct = rewriteRpcParams(body, params);
       if (direct) { body = direct; rewritten = true; }
       else {
         try {
           const form = new URLSearchParams(body);
-          const next = form.get("postData") !== null ? rewriteForTkNoiCd(form.get("postData"), id) : "";
+          const next = form.get("postData") !== null ? rewriteRpcParams(form.get("postData"), params) : "";
           if (next) { form.set("postData", next); body = form.toString(); rewritten = true; }
         } catch (_) {}
       }
     }
     return rewritten ? { url, method: template.method || "POST", body, headers: template.headers || [] } : null;
   }
-  function sendTkNoiCdRequest(id) {
+  // Own requests are flagged so the send() hook below does not treat them as HIS's.
+  function sendSpRequest(params) {
     return new Promise(resolve => {
-      const req = spTemplate && buildTkNoiCdRequest(spTemplate, id);
+      const req = spTemplate && buildSpRequest(spTemplate, params);
       if (!req) return resolve({ ok: false, error: "chưa thấy yêu cầu ajaxCALL_SP_O nào của HIS để lấy token" });
       try {
         const xhr = new XMLHttpRequest();
-        xhr.__hthTkNoiCdOwn = true;
+        xhr.__scanOwnRequest = true;
         xhrOpen.call(xhr, req.method, req.url, true);
         for (const [name, value] of req.headers) { try { xhrSetRequestHeader.call(xhr, name, value); } catch (_) {} }
         xhr.timeout = 15000;
@@ -149,6 +153,7 @@
       } catch (err) { resolve({ ok: false, error: String(err && err.message || err) }); }
     });
   }
+  const sendTkNoiCdRequest = id => sendSpRequest([TKNOICD_SP, String(id), 0]);
   const caseKeyOf = value => String(value ?? "").replace(/\s+/g, "").toUpperCase();
   window.addEventListener("message", async event => {
     const data = event.data;
@@ -246,8 +251,8 @@
     let mainCode = "";
     let mainName = "";
     let admissionTime = "";
-    // TKNOICD: the HIS "Nơi KCBBĐ", compared with the BHYT portal in QUÉT.
-    let tkNoiCd = "";
+    // MAHOSOBENHAN of the records, to check a reply is for the asked case.
+    const caseNos = [];
     let hasMainField = false;
     let hasSecondaryField = false;
     const rawParts = [];
@@ -260,7 +265,8 @@
       if (!mainCode && currentMainCode) mainCode = currentMainCode;
       if (!mainName && currentMainName) mainName = currentMainName;
       if (!admissionTime) admissionTime = pickField(record, "THOIGIANVAOVIEN");
-      if (!tkNoiCd) tkNoiCd = pickField(record, "TKNOICD");
+      const caseNo = pickField(record, "MAHOSOBENHAN");
+      if (caseNo && !caseNos.includes(caseNo)) caseNos.push(caseNo);
       rawParts.push(currentMainName, pickField(record, "BENHPHU"));
       if (currentMainCode) diagnoses.push({ code: currentMainCode, name: currentMainName, source: "BENHCHINHCODE" });
       diagnoses.push(...parseSecondaryDiagnoses(pickField(record, "BENHPHU")));
@@ -287,7 +293,7 @@
       mainCode,
       mainName,
       admissionTime,
-      tkNoiCd,
+      caseNos,
       rawText: rawParts.filter(Boolean).join(" ; "),
       diagnoses: deduped,
       codes: deduped.map(item => item.code),
@@ -303,6 +309,40 @@
     if (!icdData) return;
     window.postMessage({ [MARKER]: true, type: "ICD_DATA", hoSoBenhAnId, icdData }, "*");
   }
+
+  // QUÉT asks for the diagnosis of a case when HIS did not (re)send NT.005.HSBA
+  // for it (e.g. the case was already selected, so HIS did not reload it).
+  // The call is sent with the token of HIS's latest ajaxCALL_SP_O request. A
+  // reply is kept only when its MAHOSOBENHAN is the asked case; a reply without
+  // MAHOSOBENHAN is kept only for the id read from hidHOSOBENHANID.
+  // -> ICD_DATA (stored under hoSoBenhAnId) or ICD_MISS with the reason.
+  window.addEventListener("message", async event => {
+    const data = event.data;
+    if (!data || data.__scanIcdAsk !== true) return;
+    const key = String(data.hoSoBenhAnId ?? "").trim();
+    const wanted = caseKeyOf(data.caseNo);
+    const ids = [...new Set([key, ...(Array.isArray(data.ids) ? data.ids : [])]
+      .map(id => String(id ?? "").trim()).filter(id => /^\d+$/.test(id)))];
+    const tried = [];
+    for (const id of ids) {
+      const params = hsbaParams
+        ? hsbaParams.map((value, index) => index === 1 ? (typeof value === "number" ? Number(id) : id) : value)
+        : [TARGET_SP, id, 0];
+      const res = await sendSpRequest(params);
+      if (!res.ok) { tried.push(`${id}: ${res.error}`); if (!spTemplate) break; continue; }
+      const icdData = buildIcdPayload(res.text, key || id);
+      if (!icdData) { tried.push(`${id}: không có chẩn đoán trong kết quả`); continue; }
+      const replyCases = icdData.caseNos || [];
+      if (replyCases.length ? !!wanted && !replyCases.some(caseNo => caseKeyOf(caseNo) === wanted) : id !== key) {
+        tried.push(`${id}: trả về ${replyCases.length ? "ca " + replyCases.join(", ") : "kết quả không có mã BA"}`);
+        continue;
+      }
+      window.postMessage({ [MARKER]: true, type: "ICD_DATA", hoSoBenhAnId: key || id, icdData }, "*");
+      return;
+    }
+    window.postMessage({ [MARKER]: true, type: "ICD_MISS", hoSoBenhAnId: key, caseNo: data.caseNo,
+      reason: ids.length ? tried.join("; ") : "không có id của ca đang mở" }, "*");
+  });
 
   function isRestService(url) {
     return String(url || "").toLowerCase().includes("restservice");
@@ -323,7 +363,7 @@
   };
   XMLHttpRequest.prototype.send = function(...args) {
     const url = String(this.__hthIcdUrl || "");
-    if (isRestService(url) && !this.__hthTkNoiCdOwn) {
+    if (isRestService(url) && !this.__scanOwnRequest) {
       const rpc = readRpcCall(url, args[0]);
       const hoSoId = getTargetHoSoId(rpc);
       const tkId = getTkNoiCdId(rpc);
@@ -332,6 +372,7 @@
         return typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody);
       };
       rememberSpTemplate(rpc, url, this.__hthIcdMethod, args[0], this.__hthIcdHeaders);
+      if (hoSoId) hsbaParams = rpc.params.slice();
       if (hoSoId) {
         this.addEventListener("load", function() {
           try { if (this.status >= 200 && this.status < 300) publishDiagnosis(readText(this), hoSoId); } catch (_) {}
@@ -359,6 +400,7 @@
         const headers = [];
         try { new Headers(init.headers || {}).forEach((value, name) => headers.push([name, value])); } catch (_) {}
         rememberSpTemplate(rpc, url, init.method || "POST", init.body, headers);
+        if (hoSoId) hsbaParams = rpc.params.slice();
       }
       if (hoSoId) {
         return originalFetch.apply(this, args).then(response => {

@@ -3924,48 +3924,60 @@
     }
     return "";
   }
-  // ---- XÉT NGHIỆM LẶP LẠI CHƯA ĐỦ 90 ± 3 NGÀY (Bộ mỡ, HbA1C) ----
-  // Theo TT 39/2024/TT-BYT: chỉ thanh toán khi chưa làm trong vòng 90 ± 3 ngày,
-  // tức lần sau phải cách lần trước ít nhất 87 ngày. Xét nghiệm ngày 05/11/2026
-  // thì tìm lại từ ngày 11/08/2026 (cách 86 ngày); làm ngày 10/08/2026 (cách
-  // 87 ngày) thì không tính là lặp lại.
+  // ---- XÉT NGHIỆM LẶP LẠI CHƯA ĐỦ 93 NGÀY (Bộ mỡ, HbA1C) ----
+  // Lần sau phải cách lần trước ít nhất 93 ngày (tính theo ngày y lệnh).
+  // Xét nghiệm ngày 05/11/2026 thì tìm lại từ ngày 05/08/2026 (cách 92 ngày);
+  // làm ngày 04/08/2026 (cách 93 ngày) thì không tính là lặp lại.
   // Một ca có xét nghiệm thuộc một nhóm dưới đây, mà trong cửa sổ đó (ca
   // khác của cùng người bệnh trong danh sách đã quét, hoặc ngày khác trong cùng
   // ca) đã có xét nghiệm cùng nhóm, thì báo lỗi ở ca sau với nhãn của nhóm.
   // Mỗi nhóm so sánh riêng: Bộ mỡ không tính trùng với HbA1C.
   // Tests are reported only from (today - 3 months) on, like the visits.
   const SCAN_REPEAT_LOOKBACK_MONTHS = 3;
-  // A repeat is allowed once at least this many days have passed (90 - 3).
-  const SCAN_REPEAT_MIN_GAP_DAYS = 87;
+  // A repeat is allowed once at least this many days have passed.
+  const SCAN_REPEAT_MIN_GAP_DAYS = 93;
   const SCAN_DAY_MS = 24 * 60 * 60 * 1000;
   // Whole days from `from` to `to` (both local midnight dates).
   function scanDaysBetween(from, to) {
     return Math.round((to - from) / SCAN_DAY_MS);
   }
   // Earliest day that is still a repeat of a test done on `date`.
-  function scanRepeatWindowStart(date) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - (SCAN_REPEAT_MIN_GAP_DAYS - 1));
+  // `gapDays`: the rule's own minimum gap (rule.minGapDays, default 93).
+  function scanRepeatWindowStart(date, gapDays = SCAN_REPEAT_MIN_GAP_DAYS) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - (gapDays - 1));
   }
   const SCAN_REPEAT_TEST_RULES = [
     {
       module: "Bộ mỡ", testText: "xét nghiệm mỡ máu",
-      // Mỡ máu (gói/dịch vụ tên "mỡ máu") / Cholesterol toàn phần / HDL-C /
-      // Triglycerid (LDL-C không tính).
-      match: token => token.includes("MOMAU") ? "Mỡ máu" :
-        (token.includes("CHOLESTEROLTOANPHAN") ? "Cholesterol toàn phần" :
-        (token.includes("HDL") ? "HDL-C" :
-        (token.includes("TRIGLYCERID") ? "Triglycerid" : "")))
+      // Matched by BHYT code (XML3.MA_DICH_VU) only, not by name
+      // (LDL-C không tính).
+      codes: new Map([
+        ["23.0041.1506", "Cholesterol toàn phần"],
+        ["23.0158.1506", "Triglycerid"],
+        ["23.0084.1506", "HDL-C"]
+      ])
     },
     {
       module: "HbA1C", testText: "xét nghiệm HbA1C",
-      match: token => token.includes("HBA1C") ? "HbA1C" : ""
+      // Matched by BHYT code (XML3.MA_DICH_VU) only, not by name.
+      codes: new Map([["23.0083.1523", "HbA1C"]])
     }
   ];
-  function scanRepeatTestMatch(name) {
+  function scanRuleGapDays(rule) {
+    return rule.minGapDays || SCAN_REPEAT_MIN_GAP_DAYS;
+  }
+  function scanRuleGapText(rule) {
+    return rule.gapText || `${scanRuleGapDays(rule)} ngày`;
+  }
+  // A rule with `codes` matches only by service code (any of `codes`);
+  // a rule with `match` matches by the service name.
+  function scanRepeatTestMatch(name, ...codes) {
     const token = domToken(name);
-    if (!token) return null;
+    const codeKeys = codes.map(c => String(c || "").replace(/\s+/g, "").toUpperCase()).filter(Boolean);
     for (const rule of SCAN_REPEAT_TEST_RULES) {
-      const label = rule.match(token);
+      const label = rule.codes
+        ? (codeKeys.map(c => rule.codes.get(c)).find(Boolean) || "")
+        : (token ? rule.match(token) : "");
       if (label) return { module: rule.module, label };
     }
     return null;
@@ -4008,11 +4020,11 @@
   }
   function scanCollectRepeatTests(fallbackDay) {
     const tests = new Map();
-    const cutoff = scanRepeatWindowStart(scanReportCutoff());
+    const cutoff = scanRepeatWindowStart(scanReportCutoff(), Math.max(...SCAN_REPEAT_TEST_RULES.map(scanRuleGapDays)));
     // time: "HH:mm:ss" of the source value, "" when HIS gave only a date.
     const timeOf = value => (auditDateTimeText(value).split(" ")[1] || "");
-    const add = (code, name, day, time = "") => {
-      const hit = scanRepeatTestMatch(name);
+    const add = (code, name, day, time = "", codes = [code]) => {
+      const hit = scanRepeatTestMatch(name, ...codes);
       if (!hit) return;
       const finalDay = day || fallbackDay || "";
       if (!finalDay) return;
@@ -4027,14 +4039,14 @@
     for (const row of auditState.dvktRows.values()) {
       const orderPoint = Array.isArray(row.timePoints) ? row.timePoints.find(p => p && p.kind === "Y lệnh" && p.value) : null;
       const source = row.orderDate || (orderPoint && orderPoint.value) || "";
-      add(row.hisCode || row.bhytCode, row.name, auditDateOnly(source), timeOf(source));
+      add(row.hisCode || row.bhytCode, row.name, auditDateOnly(source), timeOf(source), [row.bhytCode, row.hisCode]);
     }
     // The timing list's start may be a performed time rather than the order time,
     // so use it only for a test the DVKT capture did not see at all; otherwise a
     // test ordered one day and performed the next would look like a repeat.
     const seenLabels = new Set([...tests.values()].map(t => t.label));
     for (const row of currentRows) {
-      const hit = scanRepeatTestMatch(row.serviceName);
+      const hit = scanRepeatTestMatch(row.serviceName, row.serviceCode);
       if (!hit || seenLabels.has(hit.label)) continue;
       add(row.serviceCode, row.serviceName, auditDateOnly(row.start || ""), timeOf(row.start || ""));
     }
@@ -4070,7 +4082,7 @@
         // Older tests are kept only as the "earlier" side of a comparison.
         if (current.date < reportCutoff) continue;
         const result = current.result;
-        const limit = scanRepeatWindowStart(current.date);
+        const limit = scanRepeatWindowStart(current.date, scanRuleGapDays(rule));
         const withTime = (day, time) => time ? `${day} ${time}` : day;
         const windowText = `từ ${withTime(scanFormatDay(limit), current.time)}`;
         const earlier = occurrences.filter(o => {
@@ -4084,7 +4096,7 @@
             item: "", detail: scanTestListText(current.tests),
             // "1 LẦN XÉT NGHIỆM MỠ MÁU - <ngày giờ>: ..." (see the render loop).
             headline: `1 LẦN ${rule.testText.toUpperCase()}`,
-            message: `Lần đầu trong ${SCAN_REPEAT_MIN_GAP_DAYS} ngày, chưa có ${rule.testText} nào trước đó (${windowText}).`
+            message: `Lần đầu trong ${scanRuleGapDays(rule)} ngày, chưa có ${rule.testText} nào trước đó (${windowText}).`
           });
           continue;
         }
@@ -4103,7 +4115,7 @@
 Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${scanTestListText(previous.tests)}${note}`,
           // Times done in the window, this one included: "2 LẦN", "3 LẦN", ...
           headline: `${earlier.length + 1} LẦN ${rule.testText.toUpperCase()}`,
-          message: `Làm lại sau ${gapDays} ngày (chưa đủ 90 ± 3 ngày), đã ${rule.testText} ngày ${earlierText} (${windowText}).`
+          message: `Làm lại sau ${gapDays} ngày (chưa đủ ${scanRuleGapText(rule)}), đã ${rule.testText} ngày ${earlierText} (${windowText}).`
         });
       }
     }
@@ -4178,6 +4190,8 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       errors.push({ module: "CT", date: scanFirstDay(cells[3], cells[4], cells[5]), time: scanFirstTime(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
     }
     // [Thiếu chẩn đoán]: a drug of drugDiagnosisRules (by mã thuốc) without a matching diagnosis.
+    // TEMP: hidden from the user for now. Remove the /* */ below to bring it back.
+    /*
     const drugTargets = scanned.thuoc ? auditDrugDiagnosisTargets() : [];
     if (drugTargets.length) {
       const caseIcd = auditMatchingIcdData();
@@ -4206,6 +4220,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
         }
       }
     }
+    */
     const pttt = scanned.pttt ? scanPtttFindings() : { errors: [], rows: [] };
     errors.push(...pttt.errors);
     const fallbackDay = (info && info.visitDate) || auditDateOnly(auditState.context && auditState.context.admissionDate || "");
@@ -4558,7 +4573,8 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
           if (scanStopRequested) break;
           // NT.005.HSBA can arrive after the phiếu lists; wait up to 3 s for it
           // when the case has a drug that needs a diagnosis check.
-          for (let waited = 0; auditDrugDiagnosisTargets().length && !auditMatchingIcdData() && waited < 3000 && !scanStopRequested; waited += 200) await scanSleep(200);
+          // TEMP: disabled while the [Thiếu chẩn đoán] check is hidden (see scanCollectFindings).
+          // for (let waited = 0; auditDrugDiagnosisTargets().length && !auditMatchingIcdData() && waited < 3000 && !scanStopRequested; waited += 200) await scanSleep(200);
           if (scanStopRequested) break;
           try { findings = scanCollectFindings(info, scanned); }
           catch (err) { findings = { errors: [{ module: "Hệ thống", item: "", message: `Không kiểm tra được: ${err && err.message || err}` }], counts: { dvkt: 0, drug: 0, services: 0 } }; }

@@ -166,6 +166,18 @@
     const ids = [read("hidHOSOBENHANID"), read("hidKHAMBENHID"), read("hidTIEPNHANID"), info && info.rowId];
     window.postMessage({ __hthTkNoiCdAsk: true, caseNo: info && info.caseNo || "", ids }, "*");
   }
+  // Why QUÉT's own NT.005.HSBA call gave no diagnosis, by HOSOBENHANID.
+  const scanIcdMiss = new Map();
+  // Ask icd_capture.js (page world) to call NT.005.HSBA for the open case, for
+  // a case HIS did not (re)load. -> the HOSOBENHANID asked for ("" = none).
+  function scanAskIcd(info) {
+    const el = document.getElementById("hidHOSOBENHANID");
+    const hoSoBenhAnId = el && "value" in el ? String(el.value || "").trim() : "";
+    scanIcdMiss.delete(hoSoBenhAnId);
+    window.postMessage({ __scanIcdAsk: true, caseNo: info && info.caseNo || "", hoSoBenhAnId,
+      ids: [info && info.rowId] }, "*");
+    return hoSoBenhAnId;
+  }
   function auditText(value) { return String(value ?? "").trim(); }
   function auditQty(value) {
     const s = auditText(value).replace(/,/g, ".").replace(/[^0-9.\-]/g, "");
@@ -954,14 +966,26 @@
       });
   }
   const onceDailyRuleCodes = new Set(["40.666", "40.677", "40.678", "40.679", "40.68", "40.671", "40.662", "40.491"]);
-  // BHYT 40.87 (Fexofenadine): maximum one tablet and one administration per day.
-  const oneTabletOnceDailyCodes = new Set(["40.87"]);
-  const allFrequencyRuleCodes = new Set([...onceDailyRuleCodes, ...oneTabletOnceDailyCodes]);
+  // BHYT code -> maximum mg per day. 40.87 (Fexofenadine): 180 mg/day,
+  // e.g. 1 viên 180 mg x 1 lần, or 1 viên 60 mg x 3 lần.
+  const maxDailyMgCodes = new Map([["40.87", 180]]);
+  // mg in one tablet: hàm lượng (NDHL/HAMLUONG) first, else the drug name
+  // ("Fefasdin 180", "Telfast 60mg").
+  function auditMgPerTablet(row) {
+    for (const text of [row && row.strength, row && row.name]) {
+      const s = auditText(text).toLowerCase();
+      const mg = s.match(/(\d+(?:[.,]\d+)?)\s*mg\b/);
+      if (mg) return Number(mg[1].replace(",", "."));
+      const bare = s.match(/(?:^|[^\d.,])(\d{2,4})(?:\s*$|[^\d.,%])/);
+      if (bare) return Number(bare[1]);
+    }
+    return null;
+  }
   function auditDoseFrequency(row) {
     const code = String(row && row.bhytCode || "").replace(/\s+/g, "");
     const isOnceDaily = onceDailyRuleCodes.has(code);
-    const isOneTabletOnceDaily = oneTabletOnceDailyCodes.has(code);
-    if (!isOnceDaily && !isOneTabletOnceDaily) return null;
+    const maxDailyMg = maxDailyMgCodes.get(code) || null;
+    if (!isOnceDaily && !maxDailyMg) return null;
 
     // Vilanta thuoc nhom khac: loai tru rieng theo ten thuoc, khong dua vao
     // ma BHYT 40.671 de loai tru ca nhung thuoc khac cung ma.
@@ -1001,30 +1025,43 @@
       if (dayParts.size > 0) frequencyValues.push(dayParts.size);
     }
 
-    // For BHYT 40.87, also enforce no more than one tablet per dose/day.
-    // This catches "2 viên/lần", "2 viên/ngày", "2vien/lan", etc.
-    let doseAmount = null;
-    if (isOneTabletOnceDaily) {
-      const reNumericPills = /(\d+(?:[.,]\d+)?)\s*vien\b/g;
-      while ((m = reNumericPills.exec(folded)) !== null) addValue(pillValues, m[1]);
-      const reWordPills = /\b(mot|hai|ba|bon|nam|sau)\s*vien\b/g;
-      while ((m = reWordPills.exec(folded)) !== null) addValue(pillValues, numberWord[m[1]]);
-      doseAmount = pillValues.length ? Math.max(...pillValues) : null;
+    const frequency = frequencyValues.length ? Math.max(...frequencyValues) : null;
 
-      // "1 viên/ngày" is itself an explicit once-daily regimen.
-      if (!frequencyValues.length && /vien\s*(?:\/\s*ngay|moi\s*ngay)\b/.test(folded)) {
-        frequencyValues.push(1);
+    if (maxDailyMg) {
+      // Tablets per day, then x mg per tablet, compared with the daily maximum.
+      const num = v => numberWord[v] || Number(String(v).replace(",", "."));
+      const NUM = "(\\d+(?:[.,]\\d+)?|mot|hai|ba|bon|nam|sau)";
+      const reNumericPills = new RegExp(`${NUM}\\s*vien\\b`, "g");
+      while ((m = reNumericPills.exec(folded)) !== null) addValue(pillValues, num(m[1]));
+      const doseAmount = pillValues.length ? Math.max(...pillValues) : null;
+      let tabletsPerDay = null;
+      // "Sáng 1 viên, chiều 2 viên": add up each time of day.
+      const reDayPart = new RegExp(`\\b(?:sang|trua|chieu|toi|dem)\\b\\s*[:\\-]?\\s*${NUM}\\s*vien\\b`, "g");
+      const dayPartAmounts = [];
+      while ((m = reDayPart.exec(folded)) !== null) addValue(dayPartAmounts, num(m[1]));
+      if (dayPartAmounts.length) tabletsPerDay = dayPartAmounts.reduce((a, b) => a + b, 0);
+      // "2 viên/ngày", "ngày 2 viên" (no "lần"): already a daily total.
+      if (tabletsPerDay === null && !frequencyValues.length) {
+        const daily = folded.match(new RegExp(`${NUM}\\s*vien\\s*(?:\\/\\s*ngay|moi\\s*ngay)\\b`)) ||
+          folded.match(new RegExp(`\\bngay\\s*(?:uong\\s*)?${NUM}\\s*vien\\b`));
+        if (daily) tabletsPerDay = num(daily[1]);
       }
+      // "2 viên/lần, 2 lần/ngày".
+      if (tabletsPerDay === null && doseAmount !== null && frequency !== null) tabletsPerDay = doseAmount * frequency;
+      const mgPerTablet = auditMgPerTablet(row);
+      const dailyMg = tabletsPerDay !== null && mgPerTablet ? tabletsPerDay * mgPerTablet : null;
+      const isViolation = dailyMg !== null && dailyMg > maxDailyMg;
+      const fmt = n => String(Math.round(n * 100) / 100);
+      return { code, frequency, doseAmount, tabletsPerDay, mgPerTablet, dailyMg, maxDailyMg, sourceText,
+        isViolation, isUnknown: dailyMg === null,
+        violationReason: isViolation
+          ? `${fmt(tabletsPerDay)} viên/ngày x ${fmt(mgPerTablet)} mg = ${fmt(dailyMg)} mg/ngày, tối đa ${maxDailyMg} mg/ngày`
+          : "" };
     }
 
-    const frequency = frequencyValues.length ? Math.max(...frequencyValues) : null;
     const frequencyViolation = frequency !== null && frequency > 1;
-    const doseViolation = isOneTabletOnceDaily && doseAmount !== null && doseAmount > 1;
-    const isViolation = frequencyViolation || doseViolation;
-    const isUnknown = !isViolation && (frequency === null || (isOneTabletOnceDaily && doseAmount === null));
-    return { code, frequency, doseAmount, sourceText, isViolation, isUnknown,
-      violationReason: doseViolation && frequencyViolation ? "Trên 1 viên và trên 1 lần/ngày" :
-        (doseViolation ? "Trên 1 viên" : (frequencyViolation ? "Trên 1 lần/ngày" : "")) };
+    return { code, frequency, sourceText, isViolation: frequencyViolation, isUnknown: frequency === null,
+      violationReason: frequencyViolation ? "Trên 1 lần/ngày" : "" };
   }
 
   const under18MedicineCodes = new Set(["40.231", "40.232", "40.228", "40.229"]);
@@ -1180,6 +1217,9 @@
     return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
+  // Per-medicine-row warnings from the last renderDrugPanel(), so QUÉT can
+  // list every scanned drug and mark the bad ones red.
+  let lastDrugRowWarnings = new Map();
   function renderDrugPanel() {
     const body = drugUI.body; body.replaceChildren();
     const rows = Array.from(auditState.medicineRows.values());
@@ -1230,6 +1270,7 @@
         `OXY chồng lấp thời gian thở máy ${item.vent.code} (${auditFormatDateTime(item.overlapStart)} – ${auditFormatDateTime(item.overlapEnd)}; ${item.minutes} phút).`);
     }
 
+    lastDrugRowWarnings = rowWarnings;
     const displayRows = rows.map(row => {
       const warningList = [...(rowWarnings.get(row) || [])];
       return {
@@ -2474,6 +2515,11 @@
       if (scanTkNoiCdMiss.size > 500) scanTkNoiCdMiss.delete(scanTkNoiCdMiss.keys().next().value);
       return;
     }
+    if (event.data.type === "ICD_MISS" && event.data.__scanIcdMsgV1 === true) {
+      scanIcdMiss.set(String(event.data.hoSoBenhAnId || "").trim(), String(event.data.reason || ""));
+      if (scanIcdMiss.size > 200) scanIcdMiss.delete(scanIcdMiss.keys().next().value);
+      return;
+    }
     if (event.data.type === "ICD_DATA" && event.data.__scanIcdMsgV1 === true) {
       const incomingHoSoId = auditNormalizeHoSoId(event.data.hoSoBenhAnId || (event.data.icdData && event.data.icdData.hoSoBenhAnId));
       const currentHoSoId = auditCurrentHoSoId() || auditNormalizeHoSoId(auditState.context && auditState.context.hoSoBenhAnId);
@@ -2485,7 +2531,6 @@
         mainCode: String(incomingIcd.mainCode || "").trim().toUpperCase(),
         mainName: String(incomingIcd.mainName || "").trim(),
         admissionTime: String(incomingIcd.admissionTime || "").trim(),
-        tkNoiCd: String(incomingIcd.tkNoiCd || "").trim(),
         diagnoses: incomingIcd.diagnoses.map(item => ({
           code: String(item && item.code || "").trim().toUpperCase(),
           name: String(item && item.name || "").trim()
@@ -2869,6 +2914,11 @@
     #scanx-scan-panel th{background:#f1f5f9;text-align:left}
     #scanx-scan-panel td,#scanx-scan-panel th{padding:3px 4px;border-bottom:1px solid #e7ebef;vertical-align:top;overflow-wrap:anywhere}
     #scanx-scan-panel td.sc-bad{color:#b91c1c;font-weight:700;background:#fff0f0}
+    #scanx-scan-panel .sc-lab-bad{color:#b91c1c;font-weight:700}
+    #scanx-scan-panel .sc-xn-table tr.sc-xn-group td{border-bottom:none}
+    #scanx-scan-panel .sc-xn-table tr.sc-lab-sub td{padding-top:1px;padding-bottom:1px;border-bottom:1px dotted #eef1f4}
+    #scanx-scan-panel .sc-xn-table td.sc-lab-name{text-align:right;color:#5f6368;padding-right:10px}
+    #scanx-scan-panel .sc-xn-table td.sc-lab-range{color:#5f6368}
     #scanx-scan-panel td.sc-warn{color:#8a5a00;background:#fff8d6}
   `;
   (document.head || document.documentElement).appendChild(scanStyle);
@@ -3158,13 +3208,19 @@
       .find(t => auditDateOnly(t)) || "";
     const visitDate = auditDateOnly(admissionText) ||
       auditDateOnly((text.match(/\b(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2})/) || [])[1] || "");
+    // Discharge date (Ra viện), for the old-case skip. hasDischargeColumn: the
+    // list has the column at all; an empty cell there = still admitted.
+    const dischargeCell = scanCellByField(row,
+      /_THOIGIANRAVIEN$|_THOIGIAN_RA_VIEN$|_NGAYRAVIEN$|_NGAY_RA_VIEN$|_NGAYHOSORAVIEN$|_NGAY_RA_DT$|_NGAYRADT$|_NGAYXUATVIEN$|_NGAY_XUAT_VIEN$/i);
+    const hasDischargeColumn = !!dischargeCell;
+    const dischargeDate = dischargeCell ? auditDateOnly(String(dischargeCell.textContent || "").trim()) : "";
     const cellText = pattern => { const td = scanCellByField(row, pattern); return td ? String(td.textContent || "").replace(/\s+/g, " ").trim() : ""; };
     const bhyt = cellText(/_MA_BHYT$|_MABHYT$/i);
     const address = cellText(/_DIACHI$/i);
     const birthYear = ((cellText(/_NGAYSINH$|_NAMSINH$/i) || dobText).match(/\b((?:19|20)\d{2})\b/) || [])[1] || "";
     // Full birth date (dd/MM/yyyy) when the list shows one: BHYT portal fallback.
     const dob = ((cellText(/_NGAYSINH$/i) || dobText).match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\b/) || [])[1] || "";
-    return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate, bhyt, address, birthYear, dob,
+    return { index, row, rowId: row.id || "", caseNo, name, patientKey, visitDate, hasDischargeColumn, dischargeDate, bhyt, address, birthYear, dob,
       label: [caseNo, name].filter(Boolean).join(" – ") || text.slice(0, 80) };
   }
   // The patient list grid: #grdLS on most HIS screens, but some list screens
@@ -3421,48 +3477,60 @@
     }
     return "";
   }
-  // ---- XÉT NGHIỆM LẶP LẠI CHƯA ĐỦ 90 ± 3 NGÀY (Bộ mỡ, HbA1C) ----
-  // Theo TT 39/2024/TT-BYT: chỉ thanh toán khi chưa làm trong vòng 90 ± 3 ngày,
-  // tức lần sau phải cách lần trước ít nhất 87 ngày. Xét nghiệm ngày 05/11/2026
-  // thì tìm lại từ ngày 11/08/2026 (cách 86 ngày); làm ngày 10/08/2026 (cách
-  // 87 ngày) thì không tính là lặp lại.
+  // ---- XÉT NGHIỆM LẶP LẠI CHƯA ĐỦ 93 NGÀY (Bộ mỡ, HbA1C) ----
+  // Lần sau phải cách lần trước ít nhất 93 ngày (tính theo ngày y lệnh).
+  // Xét nghiệm ngày 05/11/2026 thì tìm lại từ ngày 05/08/2026 (cách 92 ngày);
+  // làm ngày 04/08/2026 (cách 93 ngày) thì không tính là lặp lại.
   // Một ca có xét nghiệm thuộc một nhóm dưới đây, mà trong cửa sổ đó (ca
   // khác của cùng người bệnh trong danh sách đã quét, hoặc ngày khác trong cùng
   // ca) đã có xét nghiệm cùng nhóm, thì báo lỗi ở ca sau với nhãn của nhóm.
   // Mỗi nhóm so sánh riêng: Bộ mỡ không tính trùng với HbA1C.
   // Tests are reported only from (today - 3 months) on, like the visits.
   const SCAN_REPEAT_LOOKBACK_MONTHS = 3;
-  // A repeat is allowed once at least this many days have passed (90 - 3).
-  const SCAN_REPEAT_MIN_GAP_DAYS = 87;
+  // A repeat is allowed once at least this many days have passed.
+  const SCAN_REPEAT_MIN_GAP_DAYS = 93;
   const SCAN_DAY_MS = 24 * 60 * 60 * 1000;
   // Whole days from `from` to `to` (both local midnight dates).
   function scanDaysBetween(from, to) {
     return Math.round((to - from) / SCAN_DAY_MS);
   }
   // Earliest day that is still a repeat of a test done on `date`.
-  function scanRepeatWindowStart(date) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - (SCAN_REPEAT_MIN_GAP_DAYS - 1));
+  // `gapDays`: the rule's own minimum gap (rule.minGapDays, default 93).
+  function scanRepeatWindowStart(date, gapDays = SCAN_REPEAT_MIN_GAP_DAYS) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - (gapDays - 1));
   }
   const SCAN_REPEAT_TEST_RULES = [
     {
       module: "Bộ mỡ", testText: "xét nghiệm mỡ máu", title: "Xét nghiệm mỡ máu",
-      // Mỡ máu (gói/dịch vụ tên "mỡ máu") / Cholesterol toàn phần / HDL-C /
-      // Triglycerid (LDL-C không tính).
-      match: token => token.includes("MOMAU") ? "Mỡ máu" :
-        (token.includes("CHOLESTEROLTOANPHAN") ? "Cholesterol toàn phần" :
-        (token.includes("HDL") ? "HDL-C" :
-        (token.includes("TRIGLYCERID") ? "Triglycerid" : "")))
+      // Matched by BHYT code (XML3.MA_DICH_VU) only, not by name
+      // (LDL-C không tính).
+      codes: new Map([
+        ["23.0041.1506", "Cholesterol toàn phần"],
+        ["23.0158.1506", "Triglycerid"],
+        ["23.0084.1506", "HDL-C"]
+      ])
     },
     {
       module: "HbA1C", testText: "xét nghiệm HbA1c", title: "Xét nghiệm HbA1c",
-      match: token => token.includes("HBA1C") ? "HbA1c" : ""
+      // Matched by BHYT code (XML3.MA_DICH_VU) only, not by name.
+      codes: new Map([["23.0083.1523", "HbA1c"]])
     }
   ];
-  function scanRepeatTestMatch(name) {
+  function scanRuleGapDays(rule) {
+    return rule.minGapDays || SCAN_REPEAT_MIN_GAP_DAYS;
+  }
+  function scanRuleGapText(rule) {
+    return rule.gapText || `${scanRuleGapDays(rule)} ngày`;
+  }
+  // A rule with `codes` matches only by service code (any of `codes`);
+  // a rule with `match` matches by the service name.
+  function scanRepeatTestMatch(name, ...codes) {
     const token = domToken(name);
-    if (!token) return null;
+    const codeKeys = codes.map(c => String(c || "").replace(/\s+/g, "").toUpperCase()).filter(Boolean);
     for (const rule of SCAN_REPEAT_TEST_RULES) {
-      const label = rule.match(token);
+      const label = rule.codes
+        ? (codeKeys.map(c => rule.codes.get(c)).find(Boolean) || "")
+        : (token ? rule.match(token) : "");
       if (label) return { module: rule.module, label };
     }
     return null;
@@ -3491,9 +3559,13 @@
     const now = new Date();
     return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_MONTHS);
   }
-  // Patients (admission day) and XN rows dated before (today - 3 months,
-  // same day) are skipped: not scanned, not listed, not reported.
+  // XN / thuốc / PTTT rows whose TG chỉ định is before (today - 3 months,
+  // same day) are skipped: not listed, not reported. Patients discharged before
+  // that day are not scanned (see the patient filter in the scan loop).
   const SCAN_SKIP_OLDER_MONTHS = 3;
+  // No Ra viện column in the list: patients whose Đến khám is more than this
+  // many days before the cutoff are not scanned (a stay longer than this can be missed).
+  const SCAN_SKIP_ADMISSION_MARGIN_DAYS = 30;
   function scanSkipCutoff() {
     const now = new Date();
     return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_SKIP_OLDER_MONTHS);
@@ -3505,11 +3577,11 @@
   }
   function scanCollectRepeatTests(fallbackDay) {
     const tests = new Map();
-    const cutoff = scanRepeatWindowStart(scanReportCutoff());
+    const cutoff = scanRepeatWindowStart(scanReportCutoff(), Math.max(...SCAN_REPEAT_TEST_RULES.map(scanRuleGapDays)));
     // time: "HH:mm:ss" of the source value, "" when HIS gave only a date.
     const timeOf = value => (auditDateTimeText(value).split(" ")[1] || "");
-    const add = (code, name, day, time = "") => {
-      const hit = scanRepeatTestMatch(name);
+    const add = (code, name, day, time = "", codes = [code]) => {
+      const hit = scanRepeatTestMatch(name, ...codes);
       if (!hit) return;
       const finalDay = day || fallbackDay || "";
       if (!finalDay) return;
@@ -3524,14 +3596,14 @@
     for (const row of auditState.dvktRows.values()) {
       const orderPoint = Array.isArray(row.timePoints) ? row.timePoints.find(p => p && p.kind === "Y lệnh" && p.value) : null;
       const source = row.orderDate || (orderPoint && orderPoint.value) || "";
-      add(row.hisCode || row.bhytCode, row.name, auditDateOnly(source), timeOf(source));
+      add(row.hisCode || row.bhytCode, row.name, auditDateOnly(source), timeOf(source), [row.bhytCode, row.hisCode]);
     }
     // The timing list's start may be a performed time rather than the order time,
     // so use it only for a test the DVKT capture did not see at all; otherwise a
     // test ordered one day and performed the next would look like a repeat.
     const seenLabels = new Set([...tests.values()].map(t => t.label));
     for (const row of currentRows) {
-      const hit = scanRepeatTestMatch(row.serviceName);
+      const hit = scanRepeatTestMatch(row.serviceName, row.serviceCode);
       if (!hit || seenLabels.has(hit.label)) continue;
       add(row.serviceCode, row.serviceName, auditDateOnly(row.start || ""), timeOf(row.start || ""));
     }
@@ -3585,14 +3657,14 @@
       //     06/11/2026 07:46:32: Triglycerid.
       //     04/11/2026 13:57:00: Cholesterol toàn phần, HDL-C, Triglycerid.
       // It is an error (red) when one of this visit's tests was done again
-      // within 90 ± 3 days of an earlier one; otherwise information (yellow).
+      // within 93 days of an earlier one; otherwise information (yellow).
       const withTime = (day, time) => time ? `${day} ${time}` : day;
       const samePerson = (o, result) => o.result === result || (!!result.patientKey && o.result.patientKey === result.patientKey);
       for (const result of scanResults) {
         const own = occurrences.filter(o => o.result === result && o.date >= reportCutoff);
         if (!own.length) continue;
         const repeats = own.map(current => {
-          const limit = scanRepeatWindowStart(current.date);
+          const limit = scanRepeatWindowStart(current.date, scanRuleGapDays(rule));
           const earlier = occurrences.filter(o => samePerson(o, result) && o.date < current.date && o.date >= limit)
             .sort((x, y) => y.date - x.date);
           return earlier.length ? { current, previous: earlier[0] } : null;
@@ -3608,9 +3680,9 @@
           (o.tests.some(t => t.dateFromVisit) ? " (ngày vào viện, HIS không trả ngày y lệnh)" : ""));
         const detail = repeats.length
           ? repeats.map(r => `${withTime(r.current.day, r.current.time)} làm lại sau ${scanDaysBetween(r.previous.date, r.current.date)} ngày ` +
-              `(chưa đủ 90 ± 3 ngày) so với ${withTime(r.previous.day, r.previous.time)}` +
+              `(chưa đủ ${scanRuleGapText(rule)}) so với ${withTime(r.previous.day, r.previous.time)}` +
               (r.previous.result !== result ? ` (${r.previous.result.caseNo || r.previous.result.label})` : "")).join("\n")
-          : `Không có lần nào làm lại trong vòng ${SCAN_REPEAT_MIN_GAP_DAYS} ngày.`;
+          : `Không có lần nào làm lại trong vòng ${scanRuleGapDays(rule)} ngày.`;
         const entry = {
           module: rule.module, date: latest.day, time: latest.time, dateFromVisit,
           item: "", detail: `${detail}\n${listed.map(o => `${o.day}: ${scanTestListText(o.tests)}`).join("\n")}`,
@@ -3687,8 +3759,29 @@
     const token = domToken(row.name);
     return token.includes("ALBUMIN") && token.includes("MAU") && !token.includes("MICRO");
   }
-  function scanAlbuminFindings() {
+  // ALBUNORM (albumin người truyền) in the Thuốc list.
+  function scanIsAlbunorm(row) {
+    return domToken(row && row.name).includes("ALBUNORM");
+  }
+  // "30,1" / "30.1" -> 30.1; null when not a number.
+  function scanAlbuminValue(value) {
+    const m = auditText(value).replace(",", ".").match(/-?\d+(?:\.\d+)?/);
+    return m ? Number(m[0]) : null;
+  }
+  // Sốc nhiễm trùng (R57.2) among the case's diagnoses (main or secondary, NT.005.HSBA).
+  function scanHasSepticShock(icdData) {
+    const diagnoses = Array.isArray(icdData && icdData.diagnoses) ? icdData.diagnoses : [];
+    return [icdData && icdData.mainCode, ...diagnoses.map(item => item && item.code)]
+      .some(code => String(code || "").replace(/\s+/g, "").toUpperCase().replace(/^R572$/, "R57.2") === "R57.2");
+  }
+  // withDrugs: the Thuốc tab was scanned too, so the ALBUNORM rule can run:
+  // ERROR when a blood albumin result is > 25 g/L AND ALBUNORM is ordered the same day
+  // AND the case has no sốc nhiễm trùng diagnosis (R57.2).
+  // One error per ALBUNORM order day; badDrugRows gets the ALBUNORM rows.
+  function scanAlbuminFindings(withDrugs = false) {
     const infos = [];
+    const errors = [];
+    const badDrugRows = new Map();
     const key = auditState.contextKey;
     // day -> { time, names, results }
     const byDay = new Map();
@@ -3727,7 +3820,55 @@
           : "Chưa đọc được kết quả xét nghiệm."
       });
     }
-    return { errors: [], infos };
+    if (withDrugs) {
+      const results = [];
+      for (const row of auditState.labResults.values()) {
+        if (key && row.contextKey && row.contextKey !== key) continue;
+        if (!scanIsBloodAlbumin(row)) continue;
+        results.push({ row, value: scanAlbuminValue(row.value), when: auditDateTimeText(row.resultTime || row.performedTime || "") });
+      }
+      const fmt = list => list.map(h => `${auditText(h.row.value)} ${auditText(h.row.unit) || "g/L"}${h.when ? ` (${h.when.split(" ")[1] || h.when})` : ""}`).join(", ");
+      const seen = new Set();
+      const caseIcd = auditMatchingIcdData();
+      const septicShock = scanHasSepticShock(caseIcd);
+      for (const row of Array.from(auditState.medicineRows.values()).filter(scanIsAlbunorm)) {
+        const when = auditDateTimeText(rowOrderSource(row, Array.isArray(row.timePoints) ? row.timePoints : []));
+        const day = auditDateOnly(when);
+        const name = auditText(row.name) || "Albunorm";
+        // Only an albumin result on the same day as the ALBUNORM order counts.
+        const sameDay = day ? results.filter(h => auditDateOnly(h.when) === day) : [];
+        const high = sameDay.filter(h => h.value !== null && h.value > 25);
+        const detail = `Y lệnh ${when || "chưa rõ ngày"}; ${auditText(row.quantity)} ${auditText(row.unit)}`.trim();
+        if (high.length && !septicShock && caseIcd) badDrugRows.set(row, `Dùng ${name} khi Albumin máu > 25 g/L, không có chẩn đoán sốc nhiễm trùng (R57.2) (kết quả: ${fmt(high)}).`);
+        const dayKey = `${domToken(name)}|${day}`;
+        if (seen.has(dayKey)) continue;
+        seen.add(dayKey);
+        if (high.length && !caseIcd) {
+          // WARNING: albumin > 25 g/L but the diagnosis was not read, so R57.2 cannot be checked.
+          infos.push({ module: "Albunorm", date: day, time: when.split(" ")[1] || "", item: "",
+            message: `Dùng thuốc ${name}; Albumin máu cùng ngày: ${fmt(high)}; chưa đọc được chẩn đoán (NT.005.HSBA) nên chưa kiểm tra được R57.2.`,
+            detail });
+        } else if (high.length && !septicShock) {
+          // ERROR: same-day albumin > 25 g/L and no R57.2 diagnosis.
+          errors.push({ module: "Albumin", date: day, time: when.split(" ")[1] || "", item: "",
+            message: `Dùng thuốc ${name} khi Albumin máu > 25 g/L, không có chẩn đoán sốc nhiễm trùng (R57.2) (kết quả: ${fmt(high)}).`,
+            detail });
+        } else if (high.length) {
+          // WARNING: albumin > 25 g/L but the case has sốc nhiễm trùng (R57.2).
+          infos.push({ module: "Albunorm", date: day, time: when.split(" ")[1] || "", item: "",
+            message: `Dùng thuốc ${name}; Albumin máu cùng ngày: ${fmt(high)}; có chẩn đoán sốc nhiễm trùng (R57.2).`,
+            detail });
+        } else {
+          // WARNING: ALBUNORM without a same-day albumin result > 25 g/L.
+          infos.push({ module: "Albunorm", date: day, time: when.split(" ")[1] || "", item: "",
+            message: sameDay.length
+              ? `Dùng thuốc ${name}; Albumin máu cùng ngày: ${fmt(sameDay)}.`
+              : `Dùng thuốc ${name}; không có kết quả Albumin máu cùng ngày.`,
+            detail });
+        }
+      }
+    }
+    return { errors, infos, badDrugRows };
   }
 
   // scanned: { xn, thuoc, pttt } = the "Kiểm tra" buttons when the scan started.
@@ -3748,9 +3889,15 @@
       errors.push({ module: "CT", date: scanFirstDay(cells[3], cells[4], cells[5]), time: scanFirstTime(cells[3], cells[4], cells[5]), item: `${cells[0] || ""} ${cells[1] || ""}`.trim(), message: cells[cells.length - 1] || "" });
     }
     // [Thiếu chẩn đoán]: a drug of drugDiagnosisRules (by mã thuốc) without a matching diagnosis.
+    // Diagnosis not read (NT.005.HSBA): a yellow note, not an error.
+    const icdNotes = [];
+    // TEMP: [Thiếu chẩn đoán] check (and its "Chẩn đoán" notes) hidden from the user for now.
+    // Remove the /* */ below to bring it back.
+    /*
     const drugTargets = scanned.thuoc ? auditDrugDiagnosisTargets() : [];
     if (drugTargets.length) {
       const caseIcd = auditMatchingIcdData();
+      const icdMissReason = caseIcd ? "" : (scanIcdMiss.get(auditCurrentHoSoId()) || "");
       const admissionTime = auditText(caseIcd && caseIcd.admissionTime);
       const admissionDay = scanFirstDay(admissionTime) || (info && info.visitDate) || "";
       for (const { rule, rows } of drugTargets) {
@@ -3766,19 +3913,24 @@
           const orderText = auditText(row.orderDate) || day || "chưa rõ ngày";
           // Shown: "10/09/2026 15:00:00 [Thiếu chẩn đoán]: Thuốc Kavasdin 5".
           // Order / admission times and the no-ICD case are kept for the hover.
-          const detail = caseIcd
-            ? `Y lệnh ${orderText}; vào viện ${admissionTime || admissionDay || "chưa rõ"}: thiếu chẩn đoán phù hợp.`
-            : `Y lệnh ${orderText}: chưa đọc được chẩn đoán (NT.005.HSBA) nên không kiểm tra được.`;
           // No order date: the error falls on the admission day, so show its time.
           const time = scanFirstDay(row.orderDate) ? (auditDateTimeText(row.orderDate).split(" ")[1] || "")
             : (auditDateTimeText(admissionTime).split(" ")[1] || "");
+          if (!caseIcd) {
+            icdNotes.push({ module: "Chẩn đoán", date: day, time, item: "",
+              message: `Thuốc ${name}: chưa đọc được chẩn đoán (NT.005.HSBA) nên chưa kiểm tra được thiếu chẩn đoán.`,
+              detail: `Y lệnh ${orderText}${icdMissReason ? `; ${icdMissReason}` : ""}.` });
+            continue;
+          }
+          const detail = `Y lệnh ${orderText}; vào viện ${admissionTime || admissionDay || "chưa rõ"}: thiếu chẩn đoán phù hợp.`;
           errors.push({ module: "Thiếu chẩn đoán", date: day, time, item: "", message: `Thuốc ${name}`, detail });
         }
       }
     }
+    */
     const pttt = scanned.pttt ? scanPtttFindings() : { errors: [], rows: [] };
     errors.push(...pttt.errors);
-    const albumin = scanned.xn ? scanAlbuminFindings() : { errors: [], infos: [] };
+    const albumin = scanned.xn ? scanAlbuminFindings(!!scanned.thuoc) : { errors: [], infos: [], badDrugRows: new Map() };
     errors.push(...albumin.errors);
     const fallbackDay = (info && info.visitDate) || auditDateOnly(auditState.context && auditState.context.admissionDate || "");
     // Every XN/DVKT row captured for the visit, for the "Xét nghiệm / DVKT"
@@ -3790,22 +3942,76 @@
         const source = rowOrderSource(row, Array.isArray(row.timePoints) ? row.timePoints : []);
         return { day: auditDateOnly(source), dateTime: auditDateTimeText(source),
           code: auditText(row.bhytCode || row.hisCode || row.serviceCode), name: auditText(row.name),
-          quantity: auditText(row.quantity), status: "", bad: false };
+          quantity: auditText(row.quantity), status: "", bad: false,
+          results: scanLabResultsForRow(row, auditState.contextKey) };
       })
       .filter(row => !scanIsTooOld(row.day, cutoff)) : [];
+    // Every medicine row captured for the visit, for the "Thuốc" table
+    // (red when renderDrugPanel found a warning on that row).
+    const drugRows = scanned.thuoc ? Array.from(auditState.medicineRows.values())
+      .map(row => {
+        const source = rowOrderSource(row, Array.isArray(row.timePoints) ? row.timePoints : []);
+        const warnings = [...(lastDrugRowWarnings.get(row) || [])];
+        if (albumin.badDrugRows.has(row)) warnings.push(albumin.badDrugRows.get(row));
+        return { day: auditDateOnly(source), dateTime: auditDateTimeText(source) || auditText(row.orderDate),
+          code: auditText(row.bhytCode || row.hisCode || row.serviceCode), name: auditText(row.name),
+          quantity: `${auditText(row.quantity)} ${auditText(row.unit)}`.trim(),
+          route: auditText(row.route), dose: auditText(row.doseText),
+          note: warnings.join("; "), bad: warnings.length > 0 };
+      })
+      .filter(row => !scanIsTooOld(row.day, cutoff))
+      .sort((a, b) => (auditDateTime(a.dateTime) || 0) - (auditDateTime(b.dateTime) || 0)) : [];
     // Every PTTT row (clean or not), for the "PTTT" table.
     const ptttRows = pttt.rows.filter(row => !scanIsTooOld(row.day, cutoff));
     // Rows dated more than SCAN_SKIP_OLDER_MONTHS ago are skipped, their errors too.
     const xnModules = new Set(["DVKT", "CT", "PTTT", "Albumin"]);
     return {
       errors: errors.filter(err => !(xnModules.has(err.module) && scanIsTooOld(err.date, cutoff))),
-      // Warnings (yellow): Albumin > 25 g/L.
-      infos: albumin.infos.filter(info => !scanIsTooOld(info.date, cutoff)),
+      // Warnings (yellow): diagnosis not read, Albumin / Albunorm info lines.
+      infos: [...icdNotes, ...albumin.infos.filter(info => !scanIsTooOld(info.date, cutoff))],
       xnRows,
+      drugRows,
       ptttRows,
       repeatTests: scanned.xn ? scanCollectRepeatTests(fallbackDay) : [],
       counts: { dvkt: auditState.dvktRows.size, drug: auditState.medicineRows.size, services: currentRows.length }
     };
+  }
+
+  // Is a lab value outside its normal range? Range text from HIS, e.g.
+  // "( 135 - 145 )", "( < 35 )", "(> 60)". null = cannot tell.
+  function scanLabOutOfRange(value, range) {
+    const num = t => { const n = parseFloat(String(t).replace(",", ".")); return Number.isFinite(n) ? n : null; };
+    const text = String(value || "").trim();
+    const v = /^-?\d+(?:[.,]\d+)?$/.test(text) ? num(text) : null;
+    if (v === null) return null;
+    const r = String(range || "").replace(/[()]/g, " ").trim();
+    let m = r.match(/^(-?[\d.,]+)\s*[-–]\s*(-?[\d.,]+)$/);
+    if (m) { const lo = num(m[1]), hi = num(m[2]); return lo !== null && hi !== null ? (v < lo || v > hi) : null; }
+    m = r.match(/^(<=?|≤)\s*(-?[\d.,]+)$/);
+    if (m) { const hi = num(m[2]); return hi === null ? null : (m[1] === "<" ? v >= hi : v > hi); }
+    m = r.match(/^(>=?|≥)\s*(-?[\d.,]+)$/);
+    if (m) { const lo = num(m[2]); return lo === null ? null : (m[1] === ">" ? v <= lo : v < lo); }
+    return null;
+  }
+
+  // The "Kết quả xét nghiệm" lines of one XN/DVKT row: same phiếu
+  // (MAUBENHPHAMID) and same service (order name or code).
+  function scanLabResultsForRow(row, key) {
+    const ticket = auditText(row.ticketId);
+    const name = domToken(auditText(row.name));
+    const codes = new Set([auditText(row.bhytCode), auditText(row.hisCode)].filter(Boolean));
+    const out = [];
+    for (const lab of auditState.labResults.values()) {
+      if (key && lab.contextKey && lab.contextKey !== key) continue;
+      if (ticket && auditText(lab.phieuId) && auditText(lab.phieuId) !== ticket) continue;
+      const sameService = (name && (domToken(auditText(lab.orderName)) === name || domToken(auditText(lab.name)) === name)) ||
+        codes.has(auditText(lab.bhytCode)) || codes.has(auditText(lab.code));
+      if (!sameService) continue;
+      const range = auditText(lab.normalRange);
+      out.push({ name: auditText(lab.name), value: auditText(lab.value), unit: auditText(lab.unit), range,
+        abnormal: scanLabOutOfRange(lab.value, range) === true });
+    }
+    return out;
   }
 
   function scanRenderResults() {
@@ -3869,8 +4075,14 @@
         if (badCount) details.open = true;
         details.appendChild(auditElement("summary", "", `Xét nghiệm / DVKT (${xnRows.length})${badCount ? ` · ${badCount} dòng lỗi` : " · không lỗi"}`));
         const table = document.createElement("table");
+        table.className = "sc-xn-table";
+        const cols = document.createElement("colgroup");
+        for (const w of ["15%", "10%", "31%", "5%", "21%", "18%"]) {
+          const col = document.createElement("col"); col.style.width = w; cols.appendChild(col);
+        }
+        table.appendChild(cols);
         const thead = document.createElement("tr");
-        for (const h of ["Ngày giờ", "Mã", "Tên", "SL"]) thead.appendChild(auditElement("th", "", h));
+        for (const h of ["Ngày giờ", "Mã", "Tên", "SL", "Kết quả", "Trị số BT"]) thead.appendChild(auditElement("th", "", h));
         table.appendChild(thead);
         for (const r of xnRows) {
           if (onlyErrors && !r.bad) continue;
@@ -3879,6 +4091,54 @@
           tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.code));
           tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.name));
           tr.appendChild(auditElement("td", "", r.quantity));
+          // One result: value + range on the service row. Several (Na+, K+,
+          // Cl-, công thức máu ...): one sub-row each, so value and range stay
+          // on the same line. Out of range in red.
+          const results = Array.isArray(r.results) ? r.results : [];
+          const resultText = lab => `${lab.value}${lab.unit ? " " + lab.unit : ""}`;
+          if (results.length === 1) {
+            tr.appendChild(auditElement("td", results[0].abnormal ? "sc-lab-bad" : "", resultText(results[0])));
+            tr.appendChild(auditElement("td", "sc-lab-range", results[0].range || "--"));
+          } else {
+            tr.appendChild(auditElement("td", "", ""));
+            tr.appendChild(auditElement("td", "", ""));
+          }
+          if (results.length > 1) tr.className = "sc-xn-group";
+          table.appendChild(tr);
+          if (results.length > 1) for (const lab of results) {
+            const sub = document.createElement("tr");
+            sub.className = "sc-lab-sub";
+            const nameTd = auditElement("td", "sc-lab-name", lab.name || "");
+            nameTd.colSpan = 4;
+            sub.append(nameTd,
+              auditElement("td", lab.abnormal ? "sc-lab-bad" : "", resultText(lab)),
+              auditElement("td", "sc-lab-range", lab.range || "--"));
+            table.appendChild(sub);
+          }
+        }
+        details.appendChild(table); box.appendChild(details);
+      }
+      // Every scanned medicine row, with or without error (hover a red row for why).
+      const drugRows = Array.isArray(result.drugRows) ? result.drugRows : [];
+      if (drugRows.length && (!onlyErrors || drugRows.some(r => r.bad))) {
+        const badCount = drugRows.filter(r => r.bad).length;
+        const details = document.createElement("details");
+        if (badCount) details.open = true;
+        details.appendChild(auditElement("summary", "", `Thuốc (${drugRows.length})${badCount ? ` · ${badCount} dòng lỗi` : " · không lỗi"}`));
+        const table = document.createElement("table");
+        const thead = document.createElement("tr");
+        for (const h of ["Ngày giờ", "Mã", "Tên", "SL", "Đường dùng", "Liều dùng"]) thead.appendChild(auditElement("th", "", h));
+        table.appendChild(thead);
+        for (const r of drugRows) {
+          if (onlyErrors && !r.bad) continue;
+          const tr = document.createElement("tr");
+          if (r.note) tr.title = r.note;
+          tr.appendChild(auditElement("td", "", r.dateTime || r.day || "--/--/----"));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.code));
+          tr.appendChild(auditElement("td", r.bad ? "sc-bad" : "", r.name));
+          tr.appendChild(auditElement("td", "", r.quantity));
+          tr.appendChild(auditElement("td", "", r.route));
+          tr.appendChild(auditElement("td", "", r.dose));
           table.appendChild(tr);
         }
         details.appendChild(table); box.appendChild(details);
@@ -4266,8 +4526,10 @@
     if (!data.resultFound || !data.responseMatchesPatient) {
       const detail = data.needsCaptcha ? "Cổng đang yêu cầu xác thực bổ sung."
         : data.portalNotice ? `Thông báo đang hiện trên cổng: ${data.portalNotice}` : "";
-      bad(data.staleResult
-        ? `Cổng chưa trả thông báo khớp mã thẻ đang tra (đã thử ${SCAN_BHYT_ATTEMPTS} lần): kiểm tra trực tiếp trên cổng.`
+      bad(data.unrecognizedNotice
+        ? "Cổng trả thông báo cho mã thẻ này nhưng không phải kết quả thẻ hợp lệ (xem thông báo bên dưới; thường do sai họ tên / ngày sinh so với cổng)."
+        : data.staleResult
+        ?`Cổng chưa trả thông báo khớp mã thẻ đang tra (đã thử ${SCAN_BHYT_ATTEMPTS} lần): kiểm tra trực tiếp trên cổng.`
         : "Chưa xác định được kết quả của đúng mã thẻ đang tra: kiểm tra trực tiếp trên cổng.",
         detail);
       return hisOnly();
@@ -4398,6 +4660,8 @@
   // Address key for matching visits: same as scanLooseText, but each part
   // ("Ấp Tân Mỹ-Xã Mỹ Hương-Thành phố Cần Thơ") loses its unit word (ấp, xã,
   // thành phố…), so "Tân mỹ-Xã…" and "Ấp Tân Mỹ-Xã…" give the same key.
+  // Parts are joined with nothing, so where the separators fall does not
+  // matter: "762/4/8A Tôn Đức Thắng" = "762/4/8A, Tôn Đức Thắng".
   const SCAN_ADDRESS_UNIT = /^(?:khu pho|khu vuc|thi tran|thi xa|thanh pho|ap|khom|kp|to|thon|xom|ban|buon|soc|xa|phuong|quan|huyen|tinh|tp)\b[\s.]*/;
   function scanAddressKey(value) {
     return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "d")
@@ -4407,7 +4671,7 @@
         const stripped = p.replace(SCAN_ADDRESS_UNIT, "");
         return (stripped || p).replace(/[^a-z0-9]/g, "");
       })
-      .filter(Boolean).join("|");
+      .filter(Boolean).join("");
   }
   function scanGridSignature() {
     const grid = scanListGrid();
@@ -4577,12 +4841,29 @@
         scanStatus.textContent = "Chưa chọn bệnh nhân nào trong danh sách HIS. Hãy chọn (hoặc tích) bệnh nhân cần quét, hoặc chuyển sang \"Tất cả\".";
         return;
       }
-      // Patients admitted more than SCAN_SKIP_OLDER_MONTHS ago are not scanned.
+      // Old cases are skipped only when none of their rows can be on/after the
+      // cutoff (rows are then filtered by TG chỉ định in scanCollectFindings).
+      // A patient can come before the cutoff and get a test after it (in 21/08,
+      // XN on 26/08), so Đến khám alone is not enough:
+      // - list has a Ra viện column: skip when discharged before the cutoff;
+      //   still admitted (empty cell) or discharged later -> scan.
+      // - no Ra viện column: skip when Đến khám is more than
+      //   SCAN_SKIP_ADMISSION_MARGIN_DAYS before the cutoff.
       const skipCutoff = scanSkipCutoff();
-      patients = inScope.filter(p => !scanIsTooOld(p.visitDate, skipCutoff))
-        .map((p, i) => ({ ...p, index: i, patientKey: options.personKey || p.patientKey }));
-      const skippedOld = inScope.length - patients.length;
-      skippedText = skippedOld ? ` · bỏ qua ${skippedOld} ca vào viện trước ${scanFormatDay(skipCutoff)}` : "";
+      const admissionCutoff = new Date(skipCutoff.getFullYear(), skipCutoff.getMonth(), skipCutoff.getDate() - SCAN_SKIP_ADMISSION_MARGIN_DAYS);
+      let skippedDischarged = 0, skippedAdmitted = 0;
+      patients = inScope.filter(p => {
+        if (p.hasDischargeColumn) {
+          const old = !!p.dischargeDate && scanIsTooOld(p.dischargeDate, skipCutoff);
+          if (old) skippedDischarged++;
+          return !old;
+        }
+        const old = scanIsTooOld(p.visitDate, admissionCutoff);
+        if (old) skippedAdmitted++;
+        return !old;
+      }).map((p, i) => ({ ...p, index: i, patientKey: options.personKey || p.patientKey }));
+      skippedText = (skippedDischarged ? ` · bỏ qua ${skippedDischarged} ca ra viện trước ${scanFormatDay(skipCutoff)}` : "") +
+        (skippedAdmitted ? ` · bỏ qua ${skippedAdmitted} ca vào viện trước ${scanFormatDay(admissionCutoff)}` : "");
       if (!patients.length) {
         scanStatus.textContent = `Không có ca nào để quét${skippedText}.`;
         scanSetPaused(null);
@@ -4718,9 +4999,15 @@
             bhytResult = await bhytCheck;
           }
           if (scanStopRequested) break;
-          // NT.005.HSBA can arrive after the phiếu lists; wait up to 3 s for it
-          // when the case has a drug that needs a diagnosis check.
-          for (let waited = 0; auditDrugDiagnosisTargets().length && !auditMatchingIcdData() && waited < 3000 && !scanStopRequested; waited += 200) await scanSleep(200);
+          // The case has a drug that needs a diagnosis check (incl. ALBUNORM vs
+          // R57.2): wait briefly for HIS's own NT.005.HSBA, then, as HIS does not
+          // resend it for a case that was already selected, ask for it.
+          const needsIcd = () => auditDrugDiagnosisTargets().length || Array.from(auditState.medicineRows.values()).some(scanIsAlbunorm);
+          for (let waited = 0; needsIcd() && !auditMatchingIcdData() && waited < 1500 && !scanStopRequested; waited += 200) await scanSleep(200);
+          if (needsIcd() && !auditMatchingIcdData() && !scanStopRequested) {
+            const askedId = scanAskIcd(info);
+            for (let waited = 0; !auditMatchingIcdData() && !scanIcdMiss.has(askedId) && waited < 10000 && !scanStopRequested; waited += 200) await scanSleep(200);
+          }
           if (scanStopRequested) break;
           try { findings = scanCollectFindings(info, scanned); }
           catch (err) { findings = { errors: [{ module: "Hệ thống", item: "", message: `Không kiểm tra được: ${err && err.message || err}` }], counts: { dvkt: 0, drug: 0, services: 0 } }; }
