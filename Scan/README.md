@@ -40,7 +40,7 @@ Click **QUÉT** in the right-hand button column to open the **QUÉT BỆNH NHÂN
 |---|---|
 | **Quét bệnh nhân → Tất cả** | Scan every patient shown in the HIS list. |
 | **Quét bệnh nhân → 1 người** | Scan only the selected (or ticked) patients. |
-| **Theo BHYT** + **Tìm & quét** | Enter a BHYT card number, or its last 10 characters. Scan searches by card to get the name, birth year and address, then searches again by name + birth year. It scans only the visits with the same address. Visits it skipped because the address differs are listed in a collapsed block. |
+| **Theo BHYT** + **Tìm & quét** | Enter a BHYT card number, or its last 10 characters. Scan searches by card to get the name, birth year and address, then searches again by name + birth year. It scans only the visits with the same address: house number, street, khóm/ấp/tổ and phường/xã must not disagree, but a part missing on one side (khóm left out, old names from before the 2025 merger, P./TP. abbreviations) does not count against a match. Visits it skipped because the address differs are listed in a collapsed block. Address test cases: `node Scan/tests/address.test.js`. |
 | **Kiểm tra** | What to check: **Xét nghiệm**, **Thuốc**, **PTTT**, **BHYT**. Each one opens its tab, or the portal, for every patient. Only the rules of the ticked items are reported. |
 | **Hiện → Chỉ hiện lỗi** | On: hide clean rows in the tables. Every scanned patient stays listed either way. |
 
@@ -69,7 +69,7 @@ Click **QUÉT** in the right-hand button column to open the **QUÉT BỆNH NHÂN
 
 **Two scans at once.** Don't run two scans in two HIS tabs of the same browser. They share one HIS session and open the wrong cases. Use separate Chrome profiles instead.
 
-**Old rows are skipped.** Rows and errors dated more than **3 months** ago are not reported (`SCAN_SKIP_OLDER_MONTHS`).
+**Old rows are skipped.** Rows and errors dated more than **93 days** ago are not reported (`SCAN_SKIP_OLDER_DAYS`).
 
 ## Results
 
@@ -101,7 +101,7 @@ Missing or unreadable data is never reported as a violation. Only confirmed prob
 | `[Bộ mỡ]` | error | **Lipid test repeated too soon** (TT 39/2024/TT-BYT: 90 ± 3 days). Counts Mỡ máu (panel), Cholesterol toàn phần, HDL-C and Triglycerid. LDL-C is not counted. It is an error when the same group was already done less than **87 days** earlier, either in another visit of the same patient in the scanned list or on another day of the same visit. |
 | `[HbA1C]` | error | HbA1c repeated too soon. Same window and logic as Bộ mỡ. The two groups are compared separately. |
 | `[CT]` | error | Contrast check, per day: the quantity of contrast imaging services must match the quantity of contrast medicine. |
-| `[Albumin]` | warning | Every blood albumin test (XN045 / "Albumin [Máu]", not microalbumin), one line per order day, with its result when it was loaded. |
+| `[Albumin]` | warning | Every blood albumin test (code 23.0007.1494 / XN045), one line per order day, with its result when it was loaded. |
 
 ### Thuốc
 

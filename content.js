@@ -3932,8 +3932,8 @@
   // khác của cùng người bệnh trong danh sách đã quét, hoặc ngày khác trong cùng
   // ca) đã có xét nghiệm cùng nhóm, thì báo lỗi ở ca sau với nhãn của nhóm.
   // Mỗi nhóm so sánh riêng: Bộ mỡ không tính trùng với HbA1C.
-  // Tests are reported only from (today - 3 months) on, like the visits.
-  const SCAN_REPEAT_LOOKBACK_MONTHS = 3;
+  // Tests are reported only from (today - 93 days) on, like the visits.
+  const SCAN_REPEAT_LOOKBACK_DAYS = 93;
   // A repeat is allowed once at least this many days have passed.
   const SCAN_REPEAT_MIN_GAP_DAYS = 93;
   const SCAN_DAY_MS = 24 * 60 * 60 * 1000;
@@ -3986,12 +3986,10 @@
     const m = String(text || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
   }
-  // Same day `months` months before `date` (window start, inclusive):
-  // 05/11/2026 with 3 -> 05/08/2026. A day missing in the target month is
-  // clamped to its last day: 31/05/2026 -> 28/02/2026.
-  function scanLookbackStart(date, months) {
-    const lastDay = new Date(date.getFullYear(), date.getMonth() - months + 1, 0).getDate();
-    return new Date(date.getFullYear(), date.getMonth() - months, Math.min(date.getDate(), lastDay));
+  // The day `days` days before `date` (window start, inclusive):
+  // 26/11/2026 with 93 -> 25/08/2026.
+  function scanLookbackStart(date, days) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - days);
   }
   function scanFormatDay(date) {
     const pad = n => String(n).padStart(2, "0");
@@ -3999,19 +3997,19 @@
   }
   // Watched tests of the selected visit, each with its rule and order day. If
   // HIS gave no order time for a test, fall back to the visit's admission day.
-  // Tests are only reported from (today - SCAN_REPEAT_LOOKBACK_MONTHS months,
+  // Tests are only reported from (today - SCAN_REPEAT_LOOKBACK_DAYS days,
   // same day) on, but each of those looks back SCAN_REPEAT_MIN_GAP_DAYS more,
   // so keep tests from that far back for the comparison.
   function scanReportCutoff() {
     const now = new Date();
-    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_MONTHS);
+    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_DAYS);
   }
-  // Patients (admission day) and XN rows dated before (today - 3 months,
+  // Patients (admission day) and XN rows dated before (today - 93 days,
   // same day) are skipped: not scanned, not listed, not reported.
-  const SCAN_SKIP_OLDER_MONTHS = 3;
+  const SCAN_SKIP_OLDER_DAYS = 93;
   function scanSkipCutoff() {
     const now = new Date();
-    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_SKIP_OLDER_MONTHS);
+    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_SKIP_OLDER_DAYS);
   }
   // True when `day` (dd/mm/yyyy) is known and older than the skip cutoff.
   function scanIsTooOld(day, cutoff = scanSkipCutoff()) {
@@ -4233,7 +4231,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
         quantity: auditText(row.quantity), status: row.status || "", bad: !!row.hasWarning })) : [];
     // Every PTTT row (clean or not), for the "PTTT" table.
     const ptttRows = pttt.rows.filter(row => !scanIsTooOld(row.day, cutoff));
-    // Rows dated more than SCAN_SKIP_OLDER_MONTHS ago are skipped, their errors too.
+    // Rows dated more than SCAN_SKIP_OLDER_DAYS days ago are skipped, their errors too.
     const xnModules = new Set(["DVKT", "CT", "PTTT"]);
     return {
       errors: errors.filter(err => !(xnModules.has(err.module) && scanIsTooOld(err.date, cutoff))),
@@ -4502,7 +4500,7 @@ Trước đó: ${where} ngày ${withTime(previous.day, previous.time)} — ${sca
       scanStatus.textContent = "Chưa chọn bệnh nhân nào trong danh sách HIS. Hãy chọn (hoặc tích) bệnh nhân cần quét, hoặc chuyển sang \"Tất cả\".";
       return;
     }
-    // Patients admitted more than SCAN_SKIP_OLDER_MONTHS ago are not scanned.
+    // Patients admitted more than SCAN_SKIP_OLDER_DAYS days ago are not scanned.
     const skipCutoff = scanSkipCutoff();
     const patients = inScope.filter(p => !scanIsTooOld(p.visitDate, skipCutoff))
       .map((p, i) => ({ ...p, index: i, patientKey: options.personKey || p.patientKey }));

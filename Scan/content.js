@@ -3485,8 +3485,8 @@
   // khác của cùng người bệnh trong danh sách đã quét, hoặc ngày khác trong cùng
   // ca) đã có xét nghiệm cùng nhóm, thì báo lỗi ở ca sau với nhãn của nhóm.
   // Mỗi nhóm so sánh riêng: Bộ mỡ không tính trùng với HbA1C.
-  // Tests are reported only from (today - 3 months) on, like the visits.
-  const SCAN_REPEAT_LOOKBACK_MONTHS = 3;
+  // Tests are reported only from (today - 93 days) on, like the visits.
+  const SCAN_REPEAT_LOOKBACK_DAYS = 93;
   // A repeat is allowed once at least this many days have passed.
   const SCAN_REPEAT_MIN_GAP_DAYS = 93;
   const SCAN_DAY_MS = 24 * 60 * 60 * 1000;
@@ -3539,12 +3539,10 @@
     const m = String(text || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
   }
-  // Same day `months` months before `date` (window start, inclusive):
-  // 05/11/2026 with 3 -> 05/08/2026. A day missing in the target month is
-  // clamped to its last day: 31/05/2026 -> 28/02/2026.
-  function scanLookbackStart(date, months) {
-    const lastDay = new Date(date.getFullYear(), date.getMonth() - months + 1, 0).getDate();
-    return new Date(date.getFullYear(), date.getMonth() - months, Math.min(date.getDate(), lastDay));
+  // The day `days` days before `date` (window start, inclusive):
+  // 26/11/2026 with 93 -> 25/08/2026.
+  function scanLookbackStart(date, days) {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - days);
   }
   function scanFormatDay(date) {
     const pad = n => String(n).padStart(2, "0");
@@ -3552,23 +3550,23 @@
   }
   // Watched tests of the selected visit, each with its rule and order day. If
   // HIS gave no order time for a test, fall back to the visit's admission day.
-  // Tests are only reported from (today - SCAN_REPEAT_LOOKBACK_MONTHS months,
+  // Tests are only reported from (today - SCAN_REPEAT_LOOKBACK_DAYS days,
   // same day) on, but each of those looks back SCAN_REPEAT_MIN_GAP_DAYS more,
   // so keep tests from that far back for the comparison.
   function scanReportCutoff() {
     const now = new Date();
-    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_MONTHS);
+    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_REPEAT_LOOKBACK_DAYS);
   }
-  // XN / thuốc / PTTT rows whose TG chỉ định is before (today - 3 months,
+  // XN / thuốc / PTTT rows whose TG chỉ định is before (today - 93 days,
   // same day) are skipped: not listed, not reported. Patients discharged before
   // that day are not scanned (see the patient filter in the scan loop).
-  const SCAN_SKIP_OLDER_MONTHS = 3;
+  const SCAN_SKIP_OLDER_DAYS = 93;
   // No Ra viện column in the list: patients whose Đến khám is more than this
   // many days before the cutoff are not scanned (a stay longer than this can be missed).
   const SCAN_SKIP_ADMISSION_MARGIN_DAYS = 30;
   function scanSkipCutoff() {
     const now = new Date();
-    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_SKIP_OLDER_MONTHS);
+    return scanLookbackStart(new Date(now.getFullYear(), now.getMonth(), now.getDate()), SCAN_SKIP_OLDER_DAYS);
   }
   // True when `day` (dd/mm/yyyy) is known and older than the skip cutoff.
   function scanIsTooOld(day, cutoff = scanSkipCutoff()) {
@@ -3624,8 +3622,8 @@
     // yellow as information, not counted as errors.
     const repeatInfos = new Map(scanResults.map(result => [result, []]));
     const reportCutoff = scanReportCutoff();
-    // One date range per visit for every group: the 3 months up to the visit's
-    // latest watched test (Bộ mỡ or HbA1c), e.g. 06/08/2026 – 06/11/2026.
+    // One date range per visit for every group: the 93 days up to the visit's
+    // latest watched test (Bộ mỡ or HbA1c), e.g. 05/08/2026 – 06/11/2026.
     const visitRangeEnd = new Map();
     for (const result of scanResults) {
       let end = null;
@@ -3651,9 +3649,9 @@
         }
       }
       // One entry per visit and group, listing every test of the person in the
-      // 3 months up to the visit's latest test, newest first:
+      // 93 days up to the visit's latest test, newest first:
       //   Xét nghiệm mỡ máu: Ghi nhận 3 lần xét nghiệm trong khoảng thời gian từ
-      //   ngày 06/08/2026 đến 06/11/2026.
+      //   ngày 05/08/2026 đến 06/11/2026.
       //     06/11/2026 07:46:32: Triglycerid.
       //     04/11/2026 13:57:00: Cholesterol toàn phần, HDL-C, Triglycerid.
       // It is an error (red) when one of this visit's tests was done again
@@ -3671,7 +3669,7 @@
         }).filter(Boolean);
         const latest = own.reduce((x, y) => (y.date > x.date || (+y.date === +x.date && y.time > x.time)) ? y : x);
         const end = visitRangeEnd.get(result) || latest.date;
-        const from = scanLookbackStart(end, SCAN_REPEAT_LOOKBACK_MONTHS);
+        const from = scanLookbackStart(end, SCAN_REPEAT_LOOKBACK_DAYS);
         const listed = occurrences.filter(o => samePerson(o, result) && o.date >= from && o.date <= end)
           .sort((x, y) => (y.date - x.date) || String(y.time).localeCompare(String(x.time)));
         const dateFromVisit = listed.some(o => o.tests.some(t => t.dateFromVisit));
@@ -3747,21 +3745,23 @@
   }
 
   // ---- ALBUMIN MÁU (cảnh báo) ----
-  // Every visit with a blood albumin test (XN045 "Định lượng Albumin [Máu]") gets
-  // a warning, whatever the result: one line per order day, e.g.
+  // Every visit with a blood albumin test (BHYT 23.0007.1494 / HIS XN045
+  // "Định lượng Albumin [Máu]") gets a warning, whatever the result: one line
+  // per order day, e.g.
   // "10/11/2026 07:22:00 [Albumin]: Có chỉ định Định lượng Albumin [Máu]. Kết quả: 30,1 g/L (10:26:00)".
   // Ordered tests come from the DVKT rows (Dịch vụ chỉ định); result values
   // (NT.024.2), when loaded, are added to the line of their day.
+  // Matched by code only, not by name.
+  const SCAN_BLOOD_ALBUMIN_CODES = new Set(["23.0007.1494", "XN045"]);
   function scanIsBloodAlbumin(row) {
-    for (const code of [row.code, row.bhytCode, row.hisCode, row.serviceCode]) {
-      if (auditText(code).toUpperCase() === "XN045") return true;
-    }
-    const token = domToken(row.name);
-    return token.includes("ALBUMIN") && token.includes("MAU") && !token.includes("MICRO");
+    return [row.code, row.bhytCode, row.hisCode, row.serviceCode]
+      .some(code => SCAN_BLOOD_ALBUMIN_CODES.has(auditText(code).replace(/\s+/g, "").toUpperCase()));
   }
-  // ALBUNORM (albumin người truyền) in the Thuốc list.
+  // ALBUNORM 20% (albumin người truyền, BHYT 40.455) in the Thuốc list.
+  // Matched by code only, not by name.
   function scanIsAlbunorm(row) {
-    return domToken(row && row.name).includes("ALBUNORM");
+    return [row && row.bhytCode, row && row.hisCode]
+      .some(code => auditText(code).replace(/\s+/g, "") === "40.455");
   }
   // "30,1" / "30.1" -> 30.1; null when not a number.
   function scanAlbuminValue(value) {
@@ -3963,7 +3963,7 @@
       .sort((a, b) => (auditDateTime(a.dateTime) || 0) - (auditDateTime(b.dateTime) || 0)) : [];
     // Every PTTT row (clean or not), for the "PTTT" table.
     const ptttRows = pttt.rows.filter(row => !scanIsTooOld(row.day, cutoff));
-    // Rows dated more than SCAN_SKIP_OLDER_MONTHS ago are skipped, their errors too.
+    // Rows dated more than SCAN_SKIP_OLDER_DAYS days ago are skipped, their errors too.
     const xnModules = new Set(["DVKT", "CT", "PTTT", "Albumin"]);
     return {
       errors: errors.filter(err => !(xnModules.has(err.module) && scanIsTooOld(err.date, cutoff))),
@@ -4657,22 +4657,114 @@
     return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "d")
       .toLowerCase().replace(/[^a-z0-9]/g, "");
   }
-  // Address key for matching visits: same as scanLooseText, but each part
-  // ("Ấp Tân Mỹ-Xã Mỹ Hương-Thành phố Cần Thơ") loses its unit word (ấp, xã,
-  // thành phố…), so "Tân mỹ-Xã…" and "Ấp Tân Mỹ-Xã…" give the same key.
-  // Parts are joined with nothing, so where the separators fall does not
-  // matter: "762/4/8A Tôn Đức Thắng" = "762/4/8A, Tôn Đức Thắng".
-  const SCAN_ADDRESS_UNIT = /^(?:khu pho|khu vuc|thi tran|thi xa|thanh pho|ap|khom|kp|to|thon|xom|ban|buon|soc|xa|phuong|quan|huyen|tinh|tp)\b[\s.]*/;
+  // ADDRESS-MATCH-BEGIN (extracted by Scan/tests/address.test.js)
+  // Address matching for QUÉT theo BHYT step 3. Name + birth year already
+  // match exactly, so the address only has to tell apart two people who share
+  // both. Each address is read into its parts:
+  //   "Số 142 đường Cầu Đen Khóm 3-P. Sóc Trăng-TP. Cần Thơ"
+  //   -> house "142", street "cauden", khóm "3", ward "soctrang"
+  // and two addresses are the same unless they disagree on a part both name.
+  // HIS writes one address many ways (khóm left out or not separated, P./Q./
+  // TP. abbreviations, "Phường 08", "Số", "đường", parts in another order,
+  // old names from before the 2025 merger), so a missing part never counts
+  // against a match. Run `node Scan/tests/address.test.js` after a change.
+  // Units below phường/xã: [words, kind]. "tổ" only with a number ("Tô Hiến Thành").
+  const SCAN_ADDR_MINOR = [
+    ["khu pho", "khom"], ["khu vuc", "khom"], ["khom", "khom"], ["kp", "khom"],
+    ["ap", "ap"], ["thon", "ap"], ["xom", "ap"], ["to", "to"]
+  ];
+  // Administrative units: [words, isWard, abbreviation]. An abbreviation
+  // counts only at the start of a part ("P. Sóc Trăng", "TP.HCM").
+  const SCAN_ADDR_ADMIN = [
+    ["thi tran", true], ["thi xa", false], ["thanh pho", false],
+    ["phuong", true], ["xa", true], ["quan", false], ["huyen", false], ["tinh", false],
+    ["tt", true, true], ["p", true, true], ["tp", false, true], ["tx", false, true],
+    ["q", false, true], ["h", false, true]
+  ];
+  function scanAddressParse(value) {
+    const out = { house: "", street: "", minors: {}, ward: "", empty: true };
+    const text = String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[đĐ]/g, "d").toLowerCase();
+    const isNum = w => /^\d/.test(w || "");
+    let adminSeen = false;
+    for (const rawPart of text.split(/[-,;]/)) {
+      const words = rawPart.replace(/\./g, " ")
+        .replace(/\b(kp|khom|ap|to|tt|p|q|h|tx)(\d+[a-z]?)\b/g, "$1 $2")
+        .split(/\s+/).map(w => w.replace(/[^a-z0-9/]/g, "").replace(/^0+(?=\d)/, "")).filter(Boolean);
+      if (!words.length) continue;
+      out.empty = false;
+      const unitAt = (list, i) => list.find(([unit, , abbrev]) => {
+        if (abbrev && i !== 0) return false;
+        const u = unit.split(" ");
+        return u.every((w, k) => words[i + k] === w) && i + u.length < words.length;
+      });
+      const streetWords = [];
+      let i = 0;
+      while (i < words.length) {
+        const admin = unitAt(SCAN_ADDR_ADMIN, i);
+        if (admin) {
+          // The rest of the part is the unit's name; parts after it are admin too.
+          adminSeen = true;
+          if (admin[1] && !out.ward) out.ward = words.slice(i + admin[0].split(" ").length).join("");
+          break;
+        }
+        if (adminSeen) break;
+        const minor = unitAt(SCAN_ADDR_MINOR, i);
+        const len = minor ? minor[0].split(" ").length : 0;
+        if (minor && (minor[1] !== "to" || isNum(words[i + len]))) {
+          let j = i + len;
+          let name;
+          if (isNum(words[j])) name = words[j++];
+          else {
+            const start = j;
+            while (j < words.length && !unitAt(SCAN_ADDR_MINOR, j) && !unitAt(SCAN_ADDR_ADMIN, j)) j++;
+            name = words.slice(start, j).join("");
+          }
+          if (name && !out.minors[minor[1]]) out.minors[minor[1]] = name;
+          i = j;
+          continue;
+        }
+        const w = words[i];
+        if (w === "so" && words[i + 1] === "nha" && isNum(words[i + 2])) { i += 2; continue; }
+        if (w === "so" && isNum(words[i + 1])) { i++; continue; }
+        if ((w === "duong" || w === "d") && i + 1 < words.length) { i++; continue; }
+        if (!out.house && !out.street && !streetWords.length && isNum(w)) out.house = w;
+        else streetWords.push(w);
+        i++;
+      }
+      out.street += streetWords.join("");
+    }
+    return out;
+  }
+  // Loose key, only to list each address of the card once.
   function scanAddressKey(value) {
     return String(value || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[đĐ]/g, "d")
-      .toLowerCase().split(/[-,;/]/)
-      .map(part => {
-        const p = part.replace(/\s+/g, " ").trim();
-        const stripped = p.replace(SCAN_ADDRESS_UNIT, "");
-        return (stripped || p).replace(/[^a-z0-9]/g, "");
-      })
-      .filter(Boolean).join("");
+      .toLowerCase().replace(/[^a-z0-9]/g, "");
   }
+  function scanAddressMatch(a, b) {
+    const A = scanAddressParse(a), B = scanAddressParse(b);
+    if (A.empty || B.empty) return false;
+    // A part both addresses name must agree.
+    if (A.house && B.house && A.house !== B.house) return false;
+    if (A.street && B.street && A.street !== B.street) return false;
+    for (const kind of ["khom", "ap", "to"]) {
+      if (A.minors[kind] && B.minors[kind] && A.minors[kind] !== B.minors[kind]) return false;
+    }
+    // Same house number and street: same address, whatever the ward says
+    // (left out, abbreviated, or renamed by the 2025 merger).
+    if (A.house && A.house === B.house && A.street && A.street === B.street) return true;
+    // "Tân Mỹ-Xã…" (ấp word left out) is the ấp the other side calls "Ấp Tân Mỹ".
+    const values = X => [X.house && `h:${X.house}`, X.street && `s:${X.street}`,
+      !X.house && X.street && `m:${X.street}`, ...Object.values(X.minors).map(v => `m:${v}`)].filter(Boolean);
+    const va = values(A), vb = values(B);
+    const bareClash = (X, Y, vx, vy) => !X.house && X.street && !Y.street &&
+      vy.some(v => v.startsWith("m:")) && !vy.includes(`m:${X.street}`);
+    if (bareClash(A, B, va, vb) || bareClash(B, A, vb, va)) return false;
+    // No house number + street to go by: the ward must not differ either.
+    if (A.ward && B.ward && A.ward !== B.ward) return false;
+    return va.some(v => vb.includes(v)) || (!!A.ward && A.ward === B.ward);
+  }
+  // ADDRESS-MATCH-END
   function scanGridSignature() {
     const grid = scanListGrid();
     if (!grid) return "";
@@ -4792,9 +4884,10 @@
       scanStatus.textContent = "Bước 3/3: lọc theo địa chỉ…";
       const nameKey = scanLooseText(name);
       const sameName = second.rows.filter(r => scanLooseText(r.name) === nameKey && r.birthYear === birthYear);
-      toScan = sameName.filter(r => addresses.has(scanAddressKey(r.address)));
+      const sameAddress = r => [...addresses.values()].some(a => scanAddressMatch(a, r.address));
+      toScan = sameName.filter(sameAddress);
       Object.assign(lookup, { found: sameName.length, matched: toScan.length, missing: second.missing,
-        excluded: sameName.filter(r => !addresses.has(scanAddressKey(r.address)))
+        excluded: sameName.filter(r => !sameAddress(r))
           .map(r => ({ caseNo: r.caseNo, visitDate: r.visitDate, address: r.address })) });
       if (!toScan.length) throw new Error("Không có lần vào viện nào cùng họ tên, năm sinh và địa chỉ.");
     } catch (err) {
